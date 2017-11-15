@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Watering Station</title>
+    <!-- <script src="jquery-3.2.1.min.js"></script> -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.1/Chart.bundle.min.js"></script>
+  </head>
+  <body>
+      <canvas id="wchart" width="800" height="200"></canvas>
+      <script>
+        var chart = new Chart(document.getElementById("wchart"), {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [
+              {
+                data: [],
+                label: "Moisture",
+                borderColor: "#30a000",
+                backgroundColor: "#60c010",
+                fill: false
+              },
+              {
+                data: [],
+                label: "Watering",
+                borderColor: "#0030a0",
+                backgroundColor: "#1060c0",
+                fill: false
+              }
+            ]
+          },
+          options: {
+            scales: {
+              yAxes: [{
+                id: 'moist-y-axis',
+                type: 'linear',
+                position: 'left',
+                ticks: {
+                  suggestedMin: 300,
+                  max: 500
+                }
+              }, {
+                id: 'water-y-axis',
+                type: 'linear',
+                position: 'right',
+                ticks: {
+                  beginAtZero: true,
+                  max: 10
+                }
+              }]
+            }
+          }
+        });
+
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+          if (this.readyState == 4 && this.status == 200) {
+            var resp = JSON.parse(xhttp.responseText);
+            var len = resp.moisture.data.length;
+            var mstart = (resp.moisture.time + 1 - (len % 24) + 24) % 24;
+            for (var i = 0; i < len; ++i) {
+              chart.data.labels.push((mstart + i) % 24);
+              chart.data.datasets[0].data.push(resp.moisture.data[i]);
+            }
+            chart.update();
+          }
+        };
+        xhttp.open("GET", "/data", true);
+        xhttp.send();
+
+
+      </script>
+  </body>
+</html>

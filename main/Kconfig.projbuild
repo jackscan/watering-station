@@ -1,0 +1,33 @@
+menu "Watering Station Configuration"
+
+config WIFI_SSID
+    string "WiFi SSID"
+    default "myssid"
+    help
+	SSID (network name) for the example to connect to.
+
+config WIFI_PASSWORD
+    string "WiFi Password"
+    default "mypassword"
+    help
+	WiFi password (WPA or WPA2) for the example to use.
+
+config TZ
+    string "Timezone"
+    default "CET"
+    help
+    Local timezone to use.
+
+config WATERING_HOUR
+    int "Watering Hour"
+    default 7
+    help
+    Hour of day for watering.
+
+config LED_GPIO
+    int "LED GPIO"
+    default 5
+    help
+    GPIO for status LED.
+
+endmenu

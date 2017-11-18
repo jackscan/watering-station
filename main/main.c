@@ -322,6 +322,24 @@ http_server_send_data(struct netconn *conn)
 }
 
 static void
+http_server_send_led(struct netconn *conn)
+{
+    int l = gpio_get_level(CONFIG_LED_GPIO);
+    char buf[3];
+    int n = snprintf(buf, sizeof(buf), "%d", l);
+
+    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
+    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
+    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
+    NETCONN_WRITE_CONST(conn, HTTP_PLAIN_TEXT);
+    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+    // end of header
+    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+
+    netconn_write(conn, buf, n, NETCONN_COPY);
+}
+
+static void
 http_server_netconn_serve(struct netconn *conn)
 {
     struct netbuf *inbuf;
@@ -350,6 +368,8 @@ http_server_netconn_serve(struct netconn *conn)
                 http_server_send_time(conn);
             } else if (strcmp(req, "/data") == 0) {
                 http_server_send_data(conn);
+            } else if (strcmp(req, "/led") == 0) {
+                http_server_send_led(conn);
             } else {
                 http_server_send_file(conn, req);
             }

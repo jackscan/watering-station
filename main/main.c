@@ -400,8 +400,9 @@ static TickType_t ticks_till_hour(void)
     struct tm timeinfo;
     time(&now);
     localtime_r(&now, &timeinfo);
-    int diff = (60 - timeinfo.tm_min) * 60 + 60 - timeinfo.tm_sec;
-    // int diff = 60 - timeinfo.tm_sec;
+    int diff = (60 - timeinfo.tm_min) * 60 - timeinfo.tm_sec;
+    if (diff <= 0)
+        diff = 60 * 60;
     return pdMS_TO_TICKS(diff * 1000);
 }
 

@@ -405,7 +405,8 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "esp_wifi_set_ps().");
-    esp_wifi_set_ps(WIFI_PS_MODEM);
+    // esp_wifi_set_ps(WIFI_PS_MODEM);
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 static void setup_ps(void)

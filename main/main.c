@@ -1,6 +1,7 @@
 #include "apps/sntp/sntp.h"
 
 #include "freertos/timers.h"
+#include "freertos/semphr.h"
 #include "freertos/FreeRTOS.h"
 
 #include "esp_system.h"
@@ -61,6 +62,10 @@ static struct wstation {
     int wcount;
     int time;
 } s_station;
+    StaticSemaphore_t sensorSem;
+    SemaphoreHandle_t sensorSemHandle;
+    StaticSemaphore_t dataSem;
+    SemaphoreHandle_t dataSemHandle;
 
 static void set_led(bool value)
 {
@@ -146,25 +151,28 @@ http_server_send_file(struct netconn *conn, const char *filename)
     }
 }
 
-static int read_moisture(void)
+static int read_moisture(TickType_t maxWait)
 {
-    gpio_set_level(REF_GPIO, 1);
-    adc1_config_width(ADC_WIDTH_BIT_9);
-    adc1_config_channel_atten(ADC1_MOISTURE_CHANNEL, ADC_ATTEN_11db);
+    int v = -1;
+    if (xSemaphoreTake(s_station.sensorSemHandle, maxWait) == pdTRUE){
+        gpio_set_level(REF_GPIO, 1);
+        adc1_config_width(ADC_WIDTH_BIT_9);
+        adc1_config_channel_atten(ADC1_MOISTURE_CHANNEL, ADC_ATTEN_11db);
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    int v = 0;
-    const int count = 16;
-    for (int i = 0; i < count; ++i) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        v += 512 - adc1_get_raw(ADC1_MOISTURE_CHANNEL);
-        // ESP_LOGI(TAG, "v: %d", v);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        const int count = 16;
+        for (int i = 0; i < count; ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            v += 512 - adc1_get_raw(ADC1_MOISTURE_CHANNEL);
+            // ESP_LOGI(TAG, "v: %d", v);
+        }
+
+        v /= count/2;
+
+        adc_power_off();
+        gpio_set_level(REF_GPIO, 0);
+        xSemaphoreGive(s_station.sensorSemHandle);
     }
-
-    v /= count;
-
-    adc_power_off();
-    gpio_set_level(REF_GPIO, 0);
 
     // ESP_LOGI(TAG, "v: %d", v);
     return v;
@@ -173,7 +181,7 @@ static int read_moisture(void)
 static void
 http_server_send_measurement(struct netconn *conn)
 {
-    int v = read_moisture();
+    int v = read_moisture(pdMS_TO_TICKS(100));
 
     NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
     NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
@@ -219,7 +227,7 @@ http_server_send_ringbuf(struct netconn *conn, int16_t *buf, int len, int cur)
     do
     {
         int v = buf[i];
-        if (v >= 0)
+        if (v >= 0 || !first)
         {
             int n = snprintf(sbuf, sizeof(sbuf), first ? "%d" : ",%d", v);
             netconn_write(conn, sbuf, n, NETCONN_COPY | NETCONN_MORE);
@@ -241,19 +249,28 @@ http_server_send_data(struct netconn *conn)
     // end of header
     NETCONN_WRITE_CONST(conn, HTTP_CRLF);
 
-    char buf[16];
-    int n;
-    NETCONN_WRITE_CONST(conn, "{\"moisture\":{\"time\":");
-    n = snprintf(buf, sizeof(buf), "%d", s_station.time);
-    netconn_write(conn, buf, n, NETCONN_COPY | NETCONN_MORE);
-    NETCONN_WRITE_CONST(conn, ",\"data\":[");
-    http_server_send_ringbuf(conn, s_station.mdata, BACKLOG_DAYS * 24, s_station.mcount);
-    NETCONN_WRITE_CONST(conn, "]},\"water\":{\"time\":");
-    n = snprintf(buf, sizeof(buf), "%d", CONFIG_WATERING_HOUR);
-    netconn_write(conn, buf, n, NETCONN_COPY | NETCONN_MORE);
-    NETCONN_WRITE_CONST(conn, ",\"data\":[");
-    http_server_send_ringbuf(conn, s_station.wdata, BACKLOG_DAYS, s_station.wcount);
-    netconn_write(conn, "]}}", 3, NETCONN_NOCOPY);
+    if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(100)) == pdTRUE)
+    {
+        char buf[16];
+        int n;
+        NETCONN_WRITE_CONST(conn, "{\"moisture\":{\"time\":");
+        n = snprintf(buf, sizeof(buf), "%d", s_station.time);
+        netconn_write(conn, buf, n, NETCONN_COPY | NETCONN_MORE);
+        NETCONN_WRITE_CONST(conn, ",\"data\":[");
+        http_server_send_ringbuf(conn, s_station.mdata, BACKLOG_DAYS * 24, s_station.mcount);
+        NETCONN_WRITE_CONST(conn, "]},\"water\":{\"time\":");
+        n = snprintf(buf, sizeof(buf), "%d", CONFIG_WATERING_HOUR);
+        netconn_write(conn, buf, n, NETCONN_COPY | NETCONN_MORE);
+        NETCONN_WRITE_CONST(conn, ",\"data\":[");
+        http_server_send_ringbuf(conn, s_station.wdata, BACKLOG_DAYS, s_station.wcount);
+        netconn_write(conn, "]}}", 3, NETCONN_NOCOPY);
+
+        xSemaphoreGive(s_station.dataSemHandle);
+    }
+    else
+    {
+        NETCONN_WRITE_CONST(conn, "{\"busy\":true}");
+    }
 }
 
 static void
@@ -349,23 +366,32 @@ static void moisture_check(TimerHandle_t xTimer)
     char buf[256];
     strftime(buf, sizeof(buf), "%c", &timeinfo);
 
-    int v = read_moisture();
+    int v = read_moisture(pdMS_TO_TICKS(2000));
     // ESP_LOGI(TAG, "time: %s, moisture: %d", buf, v);
 
-    s_station.mdata[s_station.mcount % (24 * BACKLOG_DAYS)] = (int16_t)v;
+    int hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
+    bool watering = hour == CONFIG_WATERING_HOUR;
+    int water = 0;
 
-    if (s_station.mcount > 0)
-    {
-        int hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
-        if (hour == CONFIG_WATERING_HOUR)
+    if (watering) {
+        // ESP_LOGI(TAG, "watering");
+        // TODO: calculate amount of water
+        // TODO: do watering
+    }
+
+    if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(5000)) == pdTRUE) {
+
+        if (watering)
         {
-            // ESP_LOGI(TAG, "watering");
-            s_station.wdata[s_station.wcount % (BACKLOG_DAYS)] = 0;
+            s_station.wdata[s_station.wcount % (BACKLOG_DAYS)] = water;
             ++s_station.wcount;
         }
+
+        s_station.mdata[s_station.mcount % (24 * BACKLOG_DAYS)] = (int16_t)v;
+        s_station.time = timeinfo.tm_hour;
+        ++s_station.mcount;
+        xSemaphoreGive(s_station.dataSemHandle);
     }
-    s_station.time = timeinfo.tm_hour;
-    ++s_station.mcount;
 
     if (xTimerChangePeriod(xTimer, ticks_till_hour(), 0) != pdPASS)
         assert(false);
@@ -482,6 +508,11 @@ static void setup_data(void)
     }
     s_station.mcount = 0;
     s_station.wcount = 0;
+
+    s_station.sensorSemHandle = xSemaphoreCreateBinaryStatic(&s_station.sensorSem);
+    configASSERT(s_station.sensorSemHandle);
+    s_station.dataSemHandle = xSemaphoreCreateBinaryStatic(&s_station.dataSem);
+    configASSERT(s_station.dataSemHandle);
 }
 
 static void setup_sensor(void)
@@ -555,4 +586,7 @@ void app_main(void)
     TimerHandle_t timer = xTimerCreate("Init Moisture Check", ticks_till_hour(), pdFALSE, NULL, moisture_check);
     assert(timer);
     xTimerStart(timer, 0);
+
+    xSemaphoreGive(s_station.dataSemHandle);
+    xSemaphoreGive(s_station.sensorSemHandle);
 }

@@ -358,7 +358,7 @@ http_server_netconn_serve(struct netconn *conn)
         char req[32];
         if (sscanf(buf, "GET %31s", req) == 1)
         {
-            printf("req: %s\n", req);
+            ESP_LOGI(TAG, "get: %s", req);
 
             if (strcmp(req, "/") == 0) {
                 http_server_send_file(conn, "/index.html");

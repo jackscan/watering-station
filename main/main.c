@@ -152,9 +152,16 @@ static int read_moisture(void)
     adc1_config_width(ADC_WIDTH_BIT_9);
     adc1_config_channel_atten(ADC1_MOISTURE_CHANNEL, ADC_ATTEN_11db);
 
-    vTaskDelay(pdMS_TO_TICKS(10));
-    // int v = adc1_get_raw(ADC1_MOISTURE_CHANNEL);
-    int v = adc1_get_voltage(ADC1_MOISTURE_CHANNEL);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    int v = 0;
+    const int count = 16;
+    for (int i = 0; i < count; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        v += 512 - adc1_get_raw(ADC1_MOISTURE_CHANNEL);
+        // ESP_LOGI(TAG, "v: %d", v);
+    }
+
+    v /= count;
 
     adc_power_off();
     gpio_set_level(REF_GPIO, 0);

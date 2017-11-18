@@ -665,6 +665,8 @@ static void wait_for_ntp(void)
 
 void app_main(void)
 {
+    setup_data();
+
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES)
@@ -681,7 +683,6 @@ void app_main(void)
     setup_ps();
     setup_time();
     setup_sensor();
-    setup_data();
     read_config();
 
     wait_for_ntp();

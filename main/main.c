@@ -8,8 +8,7 @@
 #include "esp_event_loop.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
-// #include "esp_spiffs.h"
-#include "esp_vfs_fat.h"
+#include "esp_spiffs.h"
 
 #include "nvs_flash.h"
 
@@ -23,7 +22,7 @@
 #include <assert.h>
 #include <string.h>
 
-#define ADC1_MOISTURE_CHANNEL (ADC1_CHANNEL_7) // (ADC1_GPIO35_CHANNEL) // channel 7
+#define ADC1_MOISTURE_CHANNEL (ADC1_GPIO35_CHANNEL) // channel 7
 #define REF_GPIO  (GPIO_NUM_25)
 
 static const char *TAG = "wstation";
@@ -61,10 +60,7 @@ static struct wstation {
     int mcount;
     int wcount;
     int time;
-    wl_handle_t wl_handle;
-} s_station = {
-    .wl_handle = WL_INVALID_HANDLE
-};
+} s_station;
 
 static void set_led(bool value)
 {
@@ -153,15 +149,14 @@ http_server_send_file(struct netconn *conn, const char *filename)
 static int read_moisture(void)
 {
     gpio_set_level(REF_GPIO, 1);
-    // adc1_config_width(ADC_WIDTH_BIT_9);
-    adc1_config_width(ADC_WIDTH_9Bit);
+    adc1_config_width(ADC_WIDTH_BIT_9);
     adc1_config_channel_atten(ADC1_MOISTURE_CHANNEL, ADC_ATTEN_11db);
 
     vTaskDelay(pdMS_TO_TICKS(10));
     // int v = adc1_get_raw(ADC1_MOISTURE_CHANNEL);
     int v = adc1_get_voltage(ADC1_MOISTURE_CHANNEL);
 
-    // adc_power_off();
+    adc_power_off();
     gpio_set_level(REF_GPIO, 0);
 
     // ESP_LOGI(TAG, "v: %d", v);
@@ -425,62 +420,49 @@ static void setup_ps(void)
 #endif
 }
 
-void setup_fatfs(void)
+void setup_spiffs(void)
 {
-    const esp_vfs_fat_mount_config_t mount_config = {
-            .max_files = 4,
-            .format_if_mount_failed = true
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = "",
+        .partition_label = "storage",
+        .max_files = 5,
+        .format_if_mount_failed = false,
     };
-    esp_err_t err = esp_vfs_fat_spiflash_mount("", "storage", &mount_config, &s_station.wl_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount FATFS (0x%x)", err);
+
+    // Use settings defined above to initialize and mount SPIFFS filesystem.
+    // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+
+    if (ret != ESP_OK)
+    {
+        if (ret == ESP_FAIL)
+        {
+            ESP_LOGE(TAG, "Failed to mount");
+        }
+        else if (ret == ESP_ERR_NOT_FOUND)
+        {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%d)", ret);
+        }
         return;
     }
+
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info("storage", &total, &used);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information %d", ret);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    }
 }
-
-// void setup_spiffs(void)
-// {
-//     ESP_LOGI(TAG, "Initializing SPIFFS");
-
-//     esp_vfs_spiffs_conf_t conf = {
-//         .base_path = "",
-//         .partition_label = "storage",
-//         .max_files = 5,
-//         .format_if_mount_failed = false,
-//     };
-
-//     // Use settings defined above to initialize and mount SPIFFS filesystem.
-//     // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
-//     esp_err_t ret = esp_vfs_spiffs_register(&conf);
-
-//     if (ret != ESP_OK)
-//     {
-//         if (ret == ESP_FAIL)
-//         {
-//             ESP_LOGE(TAG, "Failed to mount");
-//         }
-//         else if (ret == ESP_ERR_NOT_FOUND)
-//         {
-//             ESP_LOGE(TAG, "Failed to find SPIFFS partition");
-//         }
-//         else
-//         {
-//             ESP_LOGE(TAG, "Failed to initialize SPIFFS (%d)", ret);
-//         }
-//         return;
-//     }
-
-//     size_t total = 0, used = 0;
-//     ret = esp_spiffs_info("storage", &total, &used);
-//     if (ret != ESP_OK)
-//     {
-//         ESP_LOGE(TAG, "Failed to get SPIFFS partition information %d", ret);
-//     }
-//     else
-//     {
-//         ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
-//     }
-// }
 
 static void setup_data(void)
 {
@@ -552,8 +534,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     setup_led();
-    // setup_spiffs();
-    setup_fatfs();
+    setup_spiffs();
     wifi_init();
     setup_ps();
     setup_time();

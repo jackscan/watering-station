@@ -15,6 +15,7 @@
 
 #include "lwip/sys.h"
 #include "lwip/netdb.h"
+#include "lwip/ip_addr.h"
 #include "lwip/api.h"
 
 #include "driver/gpio.h"
@@ -75,6 +76,10 @@ static struct wstation {
     StaticSemaphore_t dataSem;
     SemaphoreHandle_t dataSemHandle;
     config_t config;
+    ip4_addr_t whitelist_ipaddr;
+    ip4_addr_t whitelist_netmask;
+    ip4_addr_t ipaddr;
+    ip4_addr_t netmask;
 } s_station = {
     .config.watering_hour = CONFIG_WATERING_HOUR,
 };
@@ -94,8 +99,10 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
         ESP_LOGI(TAG, "SYSTEM_EVENT_STA_GOT_IP");
-        ESP_LOGI(TAG, "got ip:%s\n",
-                 ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
+        s_station.ipaddr = event->event_info.got_ip.ip_info.ip;
+        s_station.netmask = event->event_info.got_ip.ip_info.netmask;
+        ESP_LOGI(TAG, "ip:%s\n", ip4addr_ntoa(&s_station.ipaddr));
+        ESP_LOGI(TAG, "netmask:%s\n", ip4addr_ntoa(&s_station.netmask));
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
         ESP_LOGI(TAG, "SYSTEM_EVENT_STA_DISCONNECTED");
@@ -340,6 +347,22 @@ http_server_send_led(struct netconn *conn)
 }
 
 static void
+http_server_send_addr(struct netconn *conn, ip_addr_t *fromip)
+{
+    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
+    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
+    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
+    NETCONN_WRITE_CONST(conn, HTTP_PLAIN_TEXT);
+    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+    // end of header
+    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+
+    const char *str = ipaddr_ntoa(fromip);
+
+    netconn_write(conn, str, strlen(str), NETCONN_COPY);
+}
+
+static void
 http_server_netconn_serve(struct netconn *conn)
 {
     struct netbuf *inbuf;
@@ -370,17 +393,28 @@ http_server_netconn_serve(struct netconn *conn)
                 http_server_send_data(conn);
             } else if (strcmp(req, "/led") == 0) {
                 http_server_send_led(conn);
+            } else if (strcmp(req, "/addr") == 0) {
+                ip_addr_t *fromip = netbuf_fromaddr(inbuf);
+                http_server_send_addr(conn, fromip);
             } else {
                 http_server_send_file(conn, req);
             }
+        } else if (sscanf(buf, "PUT %31s", req) == 1) {
+            ip_addr_t *fromip = netbuf_fromaddr(inbuf);
+            ESP_LOGI(TAG, "put: %s from %s", req, ipaddr_ntoa(fromip));
+            if (IP_GET_TYPE(fromip) == IPADDR_TYPE_V4)
+            {
+                // TODO:
+                // ip4_addr_t *ip = ip_2_ip4(fromip);
+                // if (ip4_addr_netcmp(ip, s_station.ipaddr, s_station.netmask))
+                // {
 
-            // netconn_write(conn, http_html_hdr, sizeof(http_html_hdr) - 1, NETCONN_NOCOPY);
-
-            // /* Send our HTML page */
-            // netconn_write(conn, http_index_hml, sizeof(http_index_hml) - 1, NETCONN_NOCOPY);
+                // }
+            }
         }
     }
     /* Close the connection (server closes in HTTP) */
+
     netconn_close(conn);
 
     /* Delete the buffer (netconn_recv gives us ownership,

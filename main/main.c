@@ -26,7 +26,8 @@
 #define ADC1_MOISTURE_CHANNEL (ADC1_GPIO35_CHANNEL) // channel 7
 #define REF_GPIO  (GPIO_NUM_25)
 
-static const char *TAG = "wstation";
+static const char WATERING_CONFIG_FILE[] = "/config";
+static const char TAG[] = "wstation";
 
 static const char HTTP_STATUS_OK[] = "HTTP/1.0 200 OK\r\n";
 static const char HTTP_STATUS_NOTFOUND[] = "HTTP/1.0 404 File not found\r\n";
@@ -55,17 +56,28 @@ static const int content_types_count = sizeof(content_types) / sizeof(content_ty
 
 #define BACKLOG_DAYS 8
 
+typedef struct {
+    int watering_hour;
+    int min_water;
+    int max_water;
+    int min_level;
+    int dst_level;
+} config_t;
+
 static struct wstation {
     int16_t mdata[24*BACKLOG_DAYS];
     int16_t wdata[BACKLOG_DAYS];
     int mcount;
     int wcount;
     int time;
-} s_station;
     StaticSemaphore_t sensorSem;
     SemaphoreHandle_t sensorSemHandle;
     StaticSemaphore_t dataSem;
     SemaphoreHandle_t dataSemHandle;
+    config_t config;
+} s_station = {
+    .config.watering_hour = CONFIG_WATERING_HOUR,
+};
 
 static void set_led(bool value)
 {
@@ -94,6 +106,42 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
     }
     return ESP_OK;
 }
+
+static bool read_config(void)
+{
+    bool ret = false;
+    FILE *file = fopen("/config", "r");
+    if (file)
+    {
+        config_t config;
+        if (fscanf(file, "%d,%d,%d,%d,%d",
+                   &config.watering_hour, &config.min_water,
+                   &config.max_water, &config.dst_level, &config.min_level) == 5)
+        {
+            s_station.config = config;
+            ret = true;
+        }
+
+        fclose(file);
+    }
+    return ret;
+}
+
+// static bool save_config(void)
+// {
+//     bool ret = false;
+//     FILE *file = fopen(WATERING_CONFIG_FILE, "w");
+//     if (file)
+//     {
+//         if (fprintf(file, "%d,%d,%d,%d,%d", s_station.config.watering_hour, s_station.config.min_water,
+//                    s_station.config.max_water, s_station.config.dst_level, s_station.config.min_level) > 0)
+//         {
+//             ret = true;
+//         }
+//         fclose(file);
+//     }
+//     return ret;
+// }
 
 static void
 http_server_send_file(struct netconn *conn, const char *filename)
@@ -579,6 +627,7 @@ void app_main(void)
     setup_time();
     setup_sensor();
     setup_data();
+    read_config();
 
     wait_for_ntp();
     xTaskCreate(&http_server, "http_server", 2048, NULL, 5, NULL);

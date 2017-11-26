@@ -10,6 +10,7 @@
 #include "esp_spiffs.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "esp_task_wdt.h"
 
 #include "nvs_flash.h"
 
@@ -17,6 +18,7 @@
 #include "lwip/ip_addr.h"
 #include "lwip/netdb.h"
 #include "lwip/sys.h"
+#include "lwip/err.h"
 
 #include "driver/adc.h"
 #include "driver/gpio.h"
@@ -404,22 +406,31 @@ static void http_server_netconn_serve(struct netconn *conn)
 
 static void http_server(void *pvParameters)
 {
+    esp_task_wdt_add(NULL);
     for (;;) {
         struct netconn *conn, *newconn;
         err_t           err;
         conn = netconn_new(NETCONN_TCP);
         netconn_bind(conn, NULL, 80);
         netconn_listen(conn);
+        // netconn_set_sendtimeout(conn, 2000);
+        netconn_set_recvtimeout(conn, 2000);
+
         do {
-            err = netconn_accept(conn, &newconn);
-            if (err == ERR_OK) {
+            while ((err = netconn_accept(conn, &newconn)) == ERR_OK) {
+                esp_task_wdt_reset();
+                netconn_set_sendtimeout(newconn, 2000);
+                netconn_set_recvtimeout(newconn, 2000);
+
                 set_led(true);
                 http_server_netconn_serve(newconn);
                 netconn_delete(newconn);
                 set_led(false);
             }
-        } while (err == ERR_OK);
-        ESP_LOGE(TAG, "error at netconn_accept: %d", err);
+            esp_task_wdt_reset();
+        } while (err == ERR_TIMEOUT);
+
+        ESP_LOGE(TAG, "error at netconn_accept: %s", lwip_strerr(err));
         netconn_close(conn);
         netconn_delete(conn);
     }

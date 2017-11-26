@@ -542,7 +542,7 @@ static void moisture_check(TimerHandle_t xTimer)
     // ESP_LOGI(TAG, "time: %s, moisture: %d", buf, v);
 
     int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
-    bool watering = hour == CONFIG_WATERING_HOUR;
+    bool watering = hour == s_station.config.watering_hour;
     // int  water = 0;
 
     if (watering) {

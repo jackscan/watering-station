@@ -22,12 +22,15 @@
 
 #include "driver/adc.h"
 #include "driver/gpio.h"
+#include "driver/timer.h"
 
 #include <assert.h>
 #include <string.h>
 
 #define ADC1_MOISTURE_CHANNEL (ADC1_GPIO35_CHANNEL) // channel 7
 #define REF_GPIO (GPIO_NUM_25)
+#define W_GPIO (GPIO_NUM_27)
+#define B_GPIO (GPIO_NUM_0)
 
 static const char WATERING_CONFIG_FILE[] = "/config";
 static const char TAG[] = "wstation";
@@ -69,6 +72,7 @@ typedef struct {
 } config_t;
 
 static struct wstation {
+    xQueueHandle      evqueue;
     int16_t           mdata[24 * BACKLOG_DAYS];
     int16_t           wdata[BACKLOG_DAYS];
     int               mcount;
@@ -87,9 +91,20 @@ static struct wstation {
     .config.watering_hour = CONFIG_WATERING_HOUR,
 };
 
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(s_station.evqueue, &gpio_num, NULL);
+}
+
 static void set_led(bool value)
 {
     gpio_set_level(CONFIG_LED_GPIO, value ? 1 : 0);
+}
+
+static void set_watering(bool value)
+{
+    gpio_set_level(W_GPIO, value ? 1 : 0);
 }
 
 esp_err_t event_handler(void *ctx, system_event_t *event)
@@ -436,6 +451,73 @@ static void http_server(void *pvParameters)
     }
 }
 
+#define ON_ESP_ERROR(E, A)                                                     \
+    do {                                                                       \
+        esp_err_t _err = (E);                                                  \
+        if (_err != ESP_OK) {                                                  \
+            ESP_LOGE(TAG, #E " failed at %d", __LINE__);                       \
+            A;                                                                 \
+        }                                                                      \
+    } while (0)
+
+static void watering_task(void *pvParameters)
+{
+    ON_ESP_ERROR(esp_task_wdt_add(NULL), abort());
+    TickType_t     timeout = pdMS_TO_TICKS(CONFIG_TASK_WDT_TIMEOUT_S * 500);
+    bool           state = false;
+    timer_config_t tconfig = {
+        .alarm_en = false,
+        .counter_en = false,
+        .intr_type = TIMER_INTR_LEVEL,
+        .counter_dir = TIMER_COUNT_UP,
+        .auto_reload = true,
+        .divider = 16,
+    };
+
+    // xTaskGetTickCount
+
+    ON_ESP_ERROR(timer_init(TIMER_GROUP_0, TIMER_0, &tconfig), abort());
+    for (;;) {
+        uint32_t gpio_num;
+        if (xQueueReceive(s_station.evqueue, &gpio_num, timeout)) {
+            bool s = gpio_get_level(B_GPIO) == 0;
+            if (s != state) {
+                if (s) {
+                    ON_ESP_ERROR(
+                        timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0),
+                        break);
+                    ON_ESP_ERROR(timer_start(TIMER_GROUP_0, TIMER_0), break);
+                    set_led(true);
+                    set_watering(true);
+                } else {
+                    set_watering(false);
+                    set_led(false);
+                    ON_ESP_ERROR(timer_pause(TIMER_GROUP_0, TIMER_0), break);
+                    double t = 0;
+                    ON_ESP_ERROR(
+                        timer_get_counter_time_sec(TIMER_GROUP_0, TIMER_0, &t),
+                        break);
+                    ESP_LOGI(TAG, "manual watering: %fs", t);
+                    esp_task_wdt_reset();
+                    if (xSemaphoreTake(s_station.dataSemHandle, timeout)
+                        == pdTRUE) {
+                        s_station.wdata[(s_station.wcount + BACKLOG_DAYS - 1)
+                                        % (BACKLOG_DAYS)]
+                            = (int16_t)(t * 1000);
+                        xSemaphoreGive(s_station.dataSemHandle);
+                    }
+                }
+                state = s;
+            }
+        }
+        esp_task_wdt_reset();
+    }
+
+    set_led(false);
+    set_watering(false);
+    abort();
+}
+
 static TickType_t ticks_till_hour(void)
 {
     time_t    now;
@@ -461,7 +543,7 @@ static void moisture_check(TimerHandle_t xTimer)
 
     int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
     bool watering = hour == CONFIG_WATERING_HOUR;
-    int  water = 0;
+    // int  water = 0;
 
     if (watering) {
         // ESP_LOGI(TAG, "watering");
@@ -473,7 +555,8 @@ static void moisture_check(TimerHandle_t xTimer)
         == pdTRUE) {
 
         if (watering) {
-            s_station.wdata[s_station.wcount % (BACKLOG_DAYS)] = water;
+            // TODO:
+            // s_station.wdata[s_station.wcount % (BACKLOG_DAYS)] = water;
             ++s_station.wcount;
         }
 
@@ -575,6 +658,9 @@ static void setup_data(void)
     configASSERT(s_station.sensorSemHandle);
     s_station.dataSemHandle = xSemaphoreCreateBinaryStatic(&s_station.dataSem);
     configASSERT(s_station.dataSemHandle);
+
+    s_station.evqueue = xQueueCreate(10, sizeof(uint32_t));
+    configASSERT(s_station.evqueue);
 }
 
 static void setup_sensor(void)
@@ -612,6 +698,24 @@ static void setup_led(void)
     set_led(false);
 }
 
+static void setup_watering_gpio(void)
+{
+    gpio_pad_select_gpio(W_GPIO);
+    gpio_set_direction(W_GPIO, GPIO_MODE_OUTPUT);
+    set_watering(false);
+}
+
+static void setup_button(void)
+{
+    gpio_pad_select_gpio(B_GPIO);
+    gpio_set_direction(B_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(B_GPIO, GPIO_FLOATING);
+    gpio_set_intr_type(B_GPIO, GPIO_INTR_ANYEDGE);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(B_GPIO, gpio_isr_handler, NULL);
+    gpio_intr_enable(B_GPIO);
+}
+
 static void wait_for_ntp(void)
 {
     set_led(true);
@@ -624,6 +728,7 @@ static void wait_for_ntp(void)
 
 void app_main(void)
 {
+    setup_watering_gpio();
     setup_data();
 
     // Initialize NVS
@@ -645,6 +750,9 @@ void app_main(void)
 
     wait_for_ntp();
     xTaskCreate(&http_server, "http_server", 2048, NULL, 5, NULL);
+
+    xTaskCreate(&watering_task, "watering task", 2048, NULL, configMAX_PRIORITIES - 2, NULL);
+    setup_button();
 
     TimerHandle_t timer = xTimerCreate("Init Moisture Check", ticks_till_hour(),
                                        pdFALSE, NULL, moisture_check);

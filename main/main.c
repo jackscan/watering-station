@@ -27,6 +27,8 @@
 #include <assert.h>
 #include <string.h>
 
+#include "http.h"
+
 #define ADC1_MOISTURE_CHANNEL (ADC1_GPIO35_CHANNEL) // channel 7
 #define REF_GPIO (GPIO_NUM_25)
 #define W_GPIO (GPIO_NUM_27)
@@ -34,32 +36,6 @@
 
 static const char WATERING_CONFIG_FILE[] = "/config";
 static const char TAG[] = "wstation";
-
-static const char HTTP_STATUS_OK[] = "HTTP/1.0 200 OK\r\n";
-static const char HTTP_STATUS_NOTFOUND[] = "HTTP/1.0 404 File not found\r\n";
-static const char HTTP_SERVER_AGENT[] = "Server: Watering Station\r\n";
-static const char HTTP_CONTENT_TYPE[] = "Content-type: ";
-static const char HTTP_PLAIN_TEXT[] = "text/plain";
-static const char HTTP_JSON[] = "application/json";
-static const char HTTP_CRLF[] = "\r\n";
-// static const char HTTP_BODY_NOTFOUND[] = "\r\n<html><body><h2>404: The
-// requested file cannot be found.</h2></body></html>";
-
-static const struct {
-    const char *extension;
-    const char *type;
-} content_types[] = {
-    { "html", "text/html" },
-    { "js", "application/javascript" },
-    { "png", "image/png" },
-    { "css", "text/css" },
-};
-
-static const int content_types_count
-    = sizeof(content_types) / sizeof(content_types[0]);
-
-#define NETCONN_WRITE_CONST(C, S)                                              \
-    netconn_write(C, S, sizeof(S) - 1, NETCONN_NOCOPY | NETCONN_MORE)
 
 #define BACKLOG_DAYS 8
 
@@ -130,98 +106,62 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
     return ESP_OK;
 }
 
+static bool parse_config(const char *str, config_t *config)
+{
+    return sscanf(str, "%d,%d,%d,%d,%d", &config->watering_hour,
+                  &config->min_water, &config->max_water, &config->min_level,
+                  &config->dst_level)
+           == 5;
+}
+
+#define CLAMP(V, MIN, MAX)                                                     \
+    if ((V) < (MIN))                                                           \
+        (V) = (MIN);                                                           \
+    else if ((V) > (MAX))                                                      \
+        (V) = (MAX);
+
+static void validate_config(config_t *config)
+{
+    CLAMP(config->watering_hour, 0, 23);
+    CLAMP(config->min_water, 0, 10);
+    CLAMP(config->max_water, config->min_water, 20);
+    CLAMP(config->min_level, 0, config->dst_level);
+    CLAMP(config->dst_level, config->min_level, 4096);
+}
+
 static bool read_config(void)
 {
     bool  ret = false;
     FILE *file = fopen("/config", "r");
     if (file) {
+        char *line = NULL;
+        size_t n = 0;
         config_t config;
-        if (fscanf(file, "%d,%d,%d,%d,%d", &config.watering_hour,
-                   &config.min_water, &config.max_water, &config.dst_level,
-                   &config.min_level)
-            == 5) {
+        if (__getline(&line, &n, file) > 0 && parse_config(line, &config)) {
+            validate_config(&config);
             s_station.config = config;
             ret = true;
         }
-
+        free(line);
         fclose(file);
     }
     return ret;
 }
 
-// static bool save_config(void)
-// {
-//     bool ret = false;
-//     FILE *file = fopen(WATERING_CONFIG_FILE, "w");
-//     if (file)
-//     {
-//         if (fprintf(file, "%d,%d,%d,%d,%d", s_station.config.watering_hour,
-//         s_station.config.min_water,
-//                    s_station.config.max_water, s_station.config.dst_level,
-//                    s_station.config.min_level) > 0)
-//         {
-//             ret = true;
-//         }
-//         fclose(file);
-//     }
-//     return ret;
-// }
-
-static void http_server_send_file(struct netconn *conn, const char *filename)
+static bool save_config(void)
 {
-    FILE *file = fopen(filename, "r");
+    bool  ret = false;
+    FILE *file = fopen(WATERING_CONFIG_FILE, "w");
     if (file) {
-        printf("file %s found\n", filename);
-        NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
-        NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-
-        // content type
-        {
-            NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
-            const char *ctype = HTTP_PLAIN_TEXT;
-            const char *ext = strrchr(filename, '.');
-            if (ext) {
-                // move pointer beyond '.'
-                ++ext;
-                for (int i = 0; i < content_types_count; ++i) {
-                    if (strcmp(content_types[i].extension, ext) == 0) {
-                        ctype = content_types[i].type;
-                        break;
-                    }
-                }
-            }
-            netconn_write(conn, ctype, strlen(ctype),
-                          NETCONN_NOCOPY | NETCONN_MORE);
-            NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+        if (fprintf(file, "%d,%d,%d,%d,%d", s_station.config.watering_hour,
+                    s_station.config.min_water, s_station.config.max_water,
+                    s_station.config.dst_level, s_station.config.min_level)
+            > 0) {
+            ret = true;
         }
-
-        // end of header
-        NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-
-        // content
-        {
-            char buf[256];
-            int  buflen = sizeof buf;
-            int  n;
-            do {
-                n = fread(buf, 1, buflen, file);
-                if (n > 0) {
-                    netconn_write(conn, buf, n, NETCONN_COPY | NETCONN_MORE);
-                }
-            } while (n == buflen);
-        }
-
         fclose(file);
-    } else {
-        printf("file %s not found\n", filename);
-        NETCONN_WRITE_CONST(conn, HTTP_STATUS_NOTFOUND);
-        NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-        NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-        NETCONN_WRITE_CONST(conn, "<html><body><h2>");
-        netconn_write(conn, filename, strlen(filename),
-                      NETCONN_COPY | NETCONN_MORE);
-        NETCONN_WRITE_CONST(conn, " not found</h2></body></html>\r\n");
     }
+    return ret;
 }
 
 static int read_moisture(TickType_t maxWait)
@@ -229,18 +169,18 @@ static int read_moisture(TickType_t maxWait)
     int v = -1;
     if (xSemaphoreTake(s_station.sensorSemHandle, maxWait) == pdTRUE) {
         gpio_set_level(REF_GPIO, 1);
-        adc1_config_width(ADC_WIDTH_BIT_9);
+        adc1_config_width(ADC_WIDTH_12Bit);
         adc1_config_channel_atten(ADC1_MOISTURE_CHANNEL, ADC_ATTEN_11db);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
         const int count = 16;
         for (int i = 0; i < count; ++i) {
             vTaskDelay(pdMS_TO_TICKS(10));
-            v += 512 - adc1_get_raw(ADC1_MOISTURE_CHANNEL);
+            v += 4096 - adc1_get_raw(ADC1_MOISTURE_CHANNEL);
             // ESP_LOGI(TAG, "v: %d", v);
         }
 
-        v /= count / 2;
+        v /= count;
 
         adc_power_off();
         gpio_set_level(REF_GPIO, 0);
@@ -251,21 +191,19 @@ static int read_moisture(TickType_t maxWait)
     return v;
 }
 
+static void http_server_send_ok(struct netconn *conn, const char *msg)
+{
+    http_server_send_header(conn, HTTP_STATUS_OK, "txt");
+    netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
+}
+
 static void http_server_send_measurement(struct netconn *conn)
 {
     int v = read_moisture(pdMS_TO_TICKS(100));
-
-    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
-    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
-    NETCONN_WRITE_CONST(conn, HTTP_PLAIN_TEXT);
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-    // end of header
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-
     char buf[16];
-    int  n = snprintf(buf, sizeof(buf), "%d", v);
-    netconn_write(conn, buf, n, NETCONN_COPY);
+    snprintf(buf, sizeof(buf), "%d", v);
+
+    http_server_send_ok(conn, buf);
 }
 
 static void http_server_send_time(struct netconn *conn)
@@ -275,18 +213,10 @@ static void http_server_send_time(struct netconn *conn)
     time(&now);
     localtime_r(&now, &timeinfo);
     char buf[256];
-    int  n = strftime(buf, sizeof(buf), "%c", &timeinfo);
+    strftime(buf, sizeof(buf), "%c", &timeinfo);
     ESP_LOGI(TAG, "time: %s", buf);
 
-    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
-    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
-    NETCONN_WRITE_CONST(conn, HTTP_PLAIN_TEXT);
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-    // end of header
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-
-    netconn_write(conn, buf, n, NETCONN_COPY);
+    http_server_send_ok(conn, buf);
 }
 
 static void http_server_send_ringbuf(struct netconn *conn, int16_t *buf,
@@ -308,13 +238,7 @@ static void http_server_send_ringbuf(struct netconn *conn, int16_t *buf,
 
 static void http_server_send_data(struct netconn *conn)
 {
-    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
-    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
-    NETCONN_WRITE_CONST(conn, HTTP_JSON);
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-    // end of header
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+    http_server_send_header(conn, HTTP_STATUS_OK, "json");
 
     if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(100)) == pdTRUE) {
         char buf[16];
@@ -326,7 +250,7 @@ static void http_server_send_data(struct netconn *conn)
         http_server_send_ringbuf(conn, s_station.mdata, BACKLOG_DAYS * 24,
                                  s_station.mcount);
         NETCONN_WRITE_CONST(conn, "]},\"water\":{\"time\":");
-        n = snprintf(buf, sizeof(buf), "%d", CONFIG_WATERING_HOUR);
+        n = snprintf(buf, sizeof(buf), "%d", s_station.config.watering_hour);
         netconn_write(conn, buf, n, NETCONN_COPY | NETCONN_MORE);
         NETCONN_WRITE_CONST(conn, ",\"data\":[");
         http_server_send_ringbuf(conn, s_station.wdata, BACKLOG_DAYS,
@@ -343,78 +267,141 @@ static void http_server_send_led(struct netconn *conn)
 {
     int  l = gpio_get_level(CONFIG_LED_GPIO);
     char buf[3];
-    int  n = snprintf(buf, sizeof(buf), "%d", l);
+    snprintf(buf, sizeof(buf), "%d", l);
 
-    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
-    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
-    NETCONN_WRITE_CONST(conn, HTTP_PLAIN_TEXT);
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-    // end of header
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-
-    netconn_write(conn, buf, n, NETCONN_COPY);
+    http_server_send_ok(conn, buf);
 }
 
-static void http_server_send_addr(struct netconn *conn, ip_addr_t *fromip)
+static bool http_client_is_allowed(struct netconn *conn)
 {
-    NETCONN_WRITE_CONST(conn, HTTP_STATUS_OK);
-    NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
-    NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
-    NETCONN_WRITE_CONST(conn, HTTP_PLAIN_TEXT);
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
-    // end of header
-    NETCONN_WRITE_CONST(conn, HTTP_CRLF);
+    bool allowed = false;
+    ip_addr_t fromip;
+    u16_t port;
+    netconn_getaddr(conn, &fromip, &port, 0);
+    ip4_addr_t *fromip4 = ip_2_ip4(&fromip);
+    ESP_LOGI(TAG, "addr %s:%u", ip4addr_ntoa(fromip4), port);
+    if (IP_GET_TYPE(&fromip) == IPADDR_TYPE_V4) {
+        if (ip4_addr_netcmp(&s_station.ipaddr, fromip4, &s_station.netmask)) {
+            ESP_LOGI(TAG, "home net");
+            allowed = true;
+        } else if (ip4_addr_netcmp(&s_station.whitelist_ipaddr, fromip4,
+                                   &s_station.whitelist_netmask)) {
+            ESP_LOGI(TAG, "whitelist net");
+            allowed = true;
+        }
+    }
+    return allowed;
+}
 
-    const char *str = ipaddr_ntoa(fromip);
+static void http_server_send_addr(struct netconn *conn)
+{
+    ip_addr_t fromip;
+    u16_t port;
+    netconn_getaddr(conn, &fromip, &port, 0);
 
-    netconn_write(conn, str, strlen(str), NETCONN_COPY);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%s:%u", ip4addr_ntoa(ip_2_ip4(&fromip)), port);
+
+    http_server_send_ok(conn, buf);
+}
+
+static void http_server_send_tasks(struct netconn *conn)
+{
+    char buf[uxTaskGetNumberOfTasks() * 40];
+    vTaskList(buf);
+
+    http_server_send_ok(conn, buf);
+}
+
+static void http_server_send_no_permission(struct netconn *conn)
+{
+    http_server_send_header(conn, HTTP_STATUS_FORBIDDEN, "txt");
+    const char msg[] = "No Permission";
+    netconn_write(conn, msg, sizeof(msg) - 1, NETCONN_COPY);
+}
+
+static void http_server_send_bad_request(struct netconn *conn, const char *msg)
+{
+    http_server_send_header(conn, HTTP_STATUS_BADREQUEST, "txt");
+    netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
+}
+
+static void http_server_send_error(struct netconn *conn, const char *msg)
+{
+    http_server_send_header(conn, HTTP_STATUS_INTERNALERROR, "txt");
+    netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
 }
 
 static void http_server_netconn_serve(struct netconn *conn)
 {
-    struct netbuf *inbuf;
-    char *         buf;
+    struct netbuf *inbuf = NULL;
+    char *         buf = NULL;
     u16_t          buflen;
-    err_t          err = netconn_recv(conn, &inbuf);
+    err_t          err;
 
-    if (err == ERR_OK) {
-        netbuf_data(inbuf, (void **)&buf, &buflen);
-
-        char req[32];
-        if (sscanf(buf, "GET %31s", req) == 1) {
-            ESP_LOGI(TAG, "get: %s", req);
-
-            if (strcmp(req, "/") == 0) {
-                http_server_send_file(conn, "/index.html");
-            } else if (strcmp(req, "/measure") == 0) {
-                http_server_send_measurement(conn);
-            } else if (strcmp(req, "/time") == 0) {
-                http_server_send_time(conn);
-            } else if (strcmp(req, "/data") == 0) {
-                http_server_send_data(conn);
-            } else if (strcmp(req, "/led") == 0) {
-                http_server_send_led(conn);
-            } else if (strcmp(req, "/addr") == 0) {
-                ip_addr_t *fromip = netbuf_fromaddr(inbuf);
-                http_server_send_addr(conn, fromip);
-            } else {
-                http_server_send_file(conn, req);
-            }
-        } else if (sscanf(buf, "PUT %31s", req) == 1) {
-            ip_addr_t *fromip = netbuf_fromaddr(inbuf);
-            ESP_LOGI(TAG, "put: %s from %s", req, ipaddr_ntoa(fromip));
-            if (IP_GET_TYPE(fromip) == IPADDR_TYPE_V4) {
-                // TODO:
-                // ip4_addr_t *ip = ip_2_ip4(fromip);
-                // if (ip4_addr_netcmp(ip, s_station.ipaddr, s_station.netmask))
-                // {
-
-                // }
-            }
+    do {
+        err = netconn_recv(conn, &inbuf);
+        if (err != ERR_OK) {
+            ESP_LOGE(TAG, "netconn_recv failed: (%s)", lwip_strerr(err));
+            break;
         }
-    }
 
+        buflen = netbuf_len(inbuf) + 1; // +1 to insert terminating 0
+        ESP_LOGI(TAG, "received %u bytes", buflen);
+        buf = malloc(buflen);
+        if (buf == NULL) {
+            ESP_LOGE(TAG, "failed to alloc: %m");
+            break;
+        }
+
+        netbuf_copy(inbuf, buf, buflen);
+        buf[buflen - 1] = '\0';
+        ESP_LOGI(TAG, "request: %*s", buflen, buf);
+
+        http_request_t req;
+        // buflen-1 to for not counting terminating zero
+        parse_http_request(buf, buflen - 1, &req);
+
+        switch (req.method) {
+        case HTTP_REQUEST_GET: {
+            if (strcmp(req.path, "/") == 0) {
+                http_server_send_file(conn, "/index.html");
+            } else if (strcmp(req.path, "/measure") == 0) {
+                http_server_send_measurement(conn);
+            } else if (strcmp(req.path, "/time") == 0) {
+                http_server_send_time(conn);
+            } else if (strcmp(req.path, "/data") == 0) {
+                http_server_send_data(conn);
+            } else if (strcmp(req.path, "/led") == 0) {
+                http_server_send_led(conn);
+            } else if (strcmp(req.path, "/addr") == 0) {
+                http_server_send_addr(conn);
+            } else if (strcmp(req.path, "/tasks") == 0) {
+                http_server_send_tasks(conn);
+            } else {
+                http_server_send_file(conn, req.path);
+            }
+        } break;
+        case HTTP_REQUEST_PUT: {
+            config_t config;
+            if (!http_client_is_allowed(conn)) {
+                http_server_send_no_permission(conn);
+            } else if (!parse_config(req.body, &config)) {
+                http_server_send_bad_request(conn, "invalid config format");
+            } else {
+                validate_config(&config);
+                s_station.config = config;
+                if (!save_config()) {
+                    http_server_send_error(conn, "failed to save config");
+                } else {
+                    http_server_send_ok(conn, "config saved");
+                }
+            }
+        } break;
+        }
+    } while (false);
+
+    free(buf);
     netconn_close(conn);
     netbuf_delete(inbuf);
 }

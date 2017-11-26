@@ -10,19 +10,23 @@
       <canvas id="wchart" width="400" height="200"></canvas>
       <script>
         var chart = new Chart(document.getElementById("wchart"), {
-          type: 'line',
+          type: 'bar',
           data: {
             labels: [],
             datasets: [
               {
+                type: 'line',
                 data: [],
+                yAxisID: 'moist-y-axis',
                 label: "Moisture",
                 borderColor: "#30a000",
                 backgroundColor: "#60c010",
                 fill: false
               },
               {
+                type: 'bar',
                 data: [],
+                yAxisID: 'water-y-axis',
                 label: "Watering",
                 borderColor: "#0030a0",
                 backgroundColor: "#1060c0",
@@ -37,16 +41,16 @@
                 type: 'linear',
                 position: 'left',
                 ticks: {
-                  suggestedMin: 300,
-                  suggestedMax: 400,
+                  suggestedMin: 1200,
+                  suggestedMax: 1600,
                 }
               }, {
                 id: 'water-y-axis',
                 type: 'linear',
                 position: 'right',
                 ticks: {
-                  beginAtZero: true,
-                  max: 10
+                  min: 2,
+                  max: 12
                 }
               }]
             }
@@ -57,11 +61,21 @@
         xhttp.onreadystatechange = function () {
           if (this.readyState == 4 && this.status == 200) {
             var resp = JSON.parse(xhttp.responseText);
-            var len = resp.moisture.data.length;
-            var mstart = (resp.moisture.time + 1 - (len % 24) + 24) % 24;
-            for (var i = 0; i < len; ++i) {
+            var mlen = resp.moisture.data.length;
+            var wlen = resp.water.data.length;
+            // var today = new Date();
+            // var mstart =
+            var mstart = (resp.moisture.time + 1 - (mlen % 24) + 24) % 24;
+            var wstart = wlen * 24 - mlen;
+            for (var i = 0; i < mlen; ++i) {
               chart.data.labels.push((mstart + i) % 24);
               chart.data.datasets[0].data.push(resp.moisture.data[i]);
+              if (i + wstart >= 0 && (i % 24) == resp.water.time) {
+                // console.log("pushing " + Math.floor((i + wstart) / 24) + ":" + resp.water.data[Math.floor((i + wstart) / 24)]);
+                chart.data.datasets[1].data.push(resp.water.data[Math.floor((i + wstart) / 24)] / 1000);
+              } else {
+                chart.data.datasets[1].data.push(0);
+              }
             }
             chart.update();
           }

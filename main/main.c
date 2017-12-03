@@ -191,6 +191,58 @@ static int read_moisture(TickType_t maxWait)
     return v;
 }
 
+static int calculate_watering_time(void) {
+
+    // int curw = read_moisture(pdMS_TO_TICKS(100));
+    // if (curw < 0) return -1;
+    // if (curw > s_station.config.min_level) return -2;
+
+    int lastw = (s_station.config.min_water + s_station.config.max_water) / 2;
+    int durw = 1;
+    if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (int i = 1; i <= BACKLOG_DAYS; ++i) {
+            int w = s_station.wdata[(s_station.wcount + BACKLOG_DAYS - i)
+                                    % (BACKLOG_DAYS)];
+            if (w > 0) {
+                lastw = w;
+                durw = i;
+                break;
+            }
+        }
+        xSemaphoreGive(s_station.dataSemHandle);
+    }
+
+    int avg = 0;
+    int count = 0;
+    const int BACKLOG_HOURS = BACKLOG_DAYS * 24;
+    if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (int i = 0; i < BACKLOG_DAYS * durw; ++i) {
+            int m = s_station.mdata[(s_station.mcount + BACKLOG_HOURS - i)
+                                    % (BACKLOG_HOURS)];
+            if (m >= 0) {
+                ++count;
+                avg += m;
+            }
+        }
+        xSemaphoreGive(s_station.dataSemHandle);
+    }
+
+    if (count == 0) {
+        avg = read_moisture(pdMS_TO_TICKS(100));
+        count = 1;
+    }
+
+    avg /= count;
+
+    int dl = (s_station.config.dst_level - s_station.config.min_level) * 2;
+    int dw = (s_station.config.max_water - s_station.config.min_water);
+
+    int nextw = lastw + (s_station.config.dst_level - avg) * dw / dl;
+    CLAMP(nextw, s_station.config.min_water, s_station.config.max_water);
+
+    return nextw;
+}
+
 static int secs_till_hour(void) {
     time_t    now;
     struct tm timeinfo;
@@ -325,6 +377,15 @@ static void http_server_send_tasks(struct netconn *conn)
     char buf[uxTaskGetNumberOfTasks() * 40];
     vTaskList(buf);
 
+
+    http_server_send_ok(conn, buf);
+}
+
+static void http_server_send_watering_calc(struct netconn *conn)
+{
+    int t = calculate_watering_time();
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", t);
     http_server_send_ok(conn, buf);
 }
 
@@ -414,6 +475,8 @@ static void http_server_netconn_serve(struct netconn *conn)
                 http_server_send_addr(conn);
             } else if (strcmp(req.path, "/tasks") == 0) {
                 http_server_send_tasks(conn);
+            } else if (strcmp(req.path, "/calc") == 0) {
+                http_server_send_watering_calc(conn);
             } else if (strcmp(req.path, "/config") == 0) {
                 http_server_send_config(conn);
             } else {

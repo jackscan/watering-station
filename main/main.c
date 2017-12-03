@@ -29,6 +29,8 @@
 
 #include "http.h"
 
+#define TEST_CYCLE 0
+
 #define WTIMER_GROUP TIMER_GROUP_1
 #define WTIMER TIMER_0
 
@@ -258,7 +260,11 @@ static int secs_till_hour(void) {
 
 static TickType_t ticks_till_hour(void)
 {
+#if TEST_CYCLE
+    return pdMS_TO_TICKS(60000);
+#else
     return pdMS_TO_TICKS(secs_till_hour() * 1000);
+#endif
 }
 
 static void http_server_send_ok(struct netconn *conn, const char *msg)
@@ -677,6 +683,10 @@ static void moisture_check(TimerHandle_t xTimer)
 
     int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
     bool watering = hour == s_station.config.watering_hour;
+#if TEST_CYCLE
+    watering = true;
+#endif
+
     int  water = 0;
 
     if (watering) {

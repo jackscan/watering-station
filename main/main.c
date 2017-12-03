@@ -446,7 +446,12 @@ static void http_server_netconn_serve(struct netconn *conn)
     do {
         err = netconn_recv(conn, &inbuf);
         if (err != ERR_OK) {
+            ip_addr_t fromip;
+            u16_t port;
+            netconn_getaddr(conn, &fromip, &port, 0);
+            ip4_addr_t *fromip4 = ip_2_ip4(&fromip);
             ESP_LOGE(TAG, "netconn_recv failed: (%s)", lwip_strerr(err));
+            ESP_LOGE(TAG, "addr %s:%u", ip4addr_ntoa(fromip4), port);
             break;
         }
 

@@ -648,6 +648,8 @@ static void setup_data(void)
 
     s_station.evqueue = xQueueCreate(10, sizeof(uint32_t));
     configASSERT(s_station.evqueue);
+    ip4addr_aton(CONFIG_WHITELIST_IPADDR, &s_station.whitelist_ipaddr);
+    ip4addr_aton(CONFIG_WHITELIST_NETMASK, &s_station.whitelist_netmask);
 }
 
 static void setup_sensor(void)

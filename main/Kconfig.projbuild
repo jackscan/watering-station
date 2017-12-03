@@ -30,4 +30,16 @@ config LED_GPIO
     help
     GPIO for status LED.
 
+config WHITELIST_IPADDR
+    string "Whitelist IP Address"
+    default "10.0.0.0"
+    help
+    Subnet IP address allowed to change config.
+
+config WHITELIST_NETMASK
+    string "Whitelist Netmask"
+    default "255.255.255.0"
+    help
+    Subnet mask for whitelist IP address.
+
 endmenu

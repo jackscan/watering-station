@@ -9,6 +9,48 @@
   <body>
       <canvas id="wchart" width="400" height="200"></canvas>
       <script>
+        var horizonalLinePlugin = {
+          afterDraw: function (chartInstance) {
+            var yValue;
+            var yScale = chartInstance.scales["moist-y-axis"];
+            var canvas = chartInstance.chart;
+            var ctx = canvas.ctx;
+            var index;
+            var line;
+            var style;
+
+            if (chartInstance.options.horizontalLine) {
+              for (index = 0; index < chartInstance.options.horizontalLine.length; index++) {
+                line = chartInstance.options.horizontalLine[index];
+
+                if (!line.style || !line.y)
+                  continue;
+
+                style = line.style;
+                yValue = yScale.getPixelForValue(line.y);
+
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 3]);
+
+                if (yValue) {
+                  ctx.beginPath();
+                  ctx.moveTo(chartInstance.chartArea.left, yValue);
+                  ctx.lineTo(chartInstance.chartArea.right, yValue);
+                  ctx.strokeStyle = style;
+                  ctx.stroke();
+                }
+
+                if (line.text) {
+                  ctx.fillStyle = style;
+                  ctx.fillText(line.text, 0, yValue + ctx.lineWidth);
+                }
+              }
+              return;
+            }
+          }
+        };
+        Chart.pluginService.register(horizonalLinePlugin);
+
         var chart = new Chart(document.getElementById("wchart"), {
           type: 'bar',
           data: {
@@ -31,58 +73,125 @@
                 borderColor: "#0030a0",
                 backgroundColor: "#1060c0",
                 fill: false
+              },
+              {
+                type: 'line',
+                data: [],
+                label: "Average Moisture",
+                yAxisID: 'moist-y-axis',
+                borderColor: "#ffa000",
+                backgroundColor: "#ffc040",
+                borderWidth: 1,
+                cubicInterpolationMode: 'monotone',
+                pointRadius: 0,
+                fill: false
               }
             ]
           },
           options: {
+            horizontalLine: [],
             scales: {
               yAxes: [{
                 id: 'moist-y-axis',
                 type: 'linear',
                 position: 'left',
                 ticks: {
-                  suggestedMin: 1200,
+                  suggestedMin: 1400,
                   suggestedMax: 1600,
                 }
               }, {
                 id: 'water-y-axis',
                 type: 'linear',
-                position: 'right',
-                ticks: {
-                  min: 2,
-                  max: 12
-                }
+                position: 'right'
               }]
             }
           }
         });
 
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function () {
-          if (this.readyState == 4 && this.status == 200) {
-            var resp = JSON.parse(xhttp.responseText);
-            var mlen = resp.moisture.data.length;
-            var wlen = resp.water.data.length;
-            // var today = new Date();
-            // var mstart =
-            var mstart = (resp.moisture.time + 1 - (mlen % 24) + 24) % 24;
-            var wstart = wlen * 24 - mlen;
-            for (var i = 0; i < mlen; ++i) {
-              chart.data.labels.push((mstart + i) % 24);
-              chart.data.datasets[0].data.push(resp.moisture.data[i]);
-              if (i + wstart >= 0 && (i % 24) == resp.water.time) {
-                // console.log("pushing " + Math.floor((i + wstart) / 24) + ":" + resp.water.data[Math.floor((i + wstart) / 24)]);
-                chart.data.datasets[1].data.push(resp.water.data[Math.floor((i + wstart) / 24)] / 1000);
-              } else {
-                chart.data.datasets[1].data.push(0);
-              }
-            }
-            chart.update();
-          }
-        };
-        xhttp.open("GET", "/data", true);
-        xhttp.send();
+        function getConfig() {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    var resp = JSON.parse(xhttp.responseText);
+                    var minw = resp[1]/1000;
+                    var maxw = resp[2]/1000;
+                    var minm = resp[3];
+                    var dstm = resp[4];
+                    var dm = dstm - minm;
+                    chart.options.scales.yAxes[1].ticks.min = Math.floor(minw);
+                    chart.options.scales.yAxes[1].ticks.max = Math.ceil(maxw);
+                    chart.options.scales.yAxes[0].ticks.suggestedMin = Math.floor((minm - dm) / 10) * 10;
+                    chart.options.scales.yAxes[0].ticks.suggestedMax = Math.ceil((dstm + dm * 2) / 10) * 10;
 
+                    chart.options.horizontalLine.push({y: minm, style: '#ff0000'});
+                    chart.options.horizontalLine.push({y: dstm, style: '#a0a0a0'});
+
+                    chart.update();
+                }
+            };
+            xhttp.open("GET", "/config", true);
+            xhttp.send();
+        }
+
+        function getData() {
+          var xhttp = new XMLHttpRequest();
+          xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+              var resp = JSON.parse(xhttp.responseText);
+              var mlen = resp.moisture.data.length;
+              var wlen = resp.water.data.length;
+              // var today = new Date();
+              // var mstart =
+              var mstart = (resp.moisture.time + 1 - (mlen % 24) + 24) % 24;
+              var wstart = mstart + mlen - wlen * 24;
+              var iw = 0;
+              var h;
+              var avg = 0;
+              var count = 0;
+              var i, j, w;
+              for (i = 0; i < mlen; ++i) {
+                h = (mstart + i) % 24;
+                chart.data.labels.push(h);
+                chart.data.datasets[0].data.push(resp.moisture.data[i]);
+                avg += resp.moisture.data[i];
+                ++count;
+                if (h == resp.water.time) {
+                  w = resp.water.data[iw];
+                  // fill average data
+                  if (w > 0) {
+                    avg /= count;
+                    for (j = 0; j < count; ++j)
+                      chart.data.datasets[2].data.push(avg);
+                    avg = 0;
+                    count = 0;
+                  } else {
+                    w = 0;
+                  }
+
+                  chart.data.datasets[1].data.push(w / 1000);
+                  ++iw;
+                } else {
+                  chart.data.datasets[1].data.push(0);
+                }
+              }
+
+              if (count > 0) {
+                avg /= count;
+                for (j = 0; j < count; ++j)
+                  chart.data.datasets[2].data.push(avg);
+              }
+
+              // console.log(chart.data.datasets[0].data.length + ", " + chart.data.datasets[1].data.length);
+              // console.log(chart.data.datasets[1].data);
+              chart.update();
+            }
+          };
+          xhttp.open("GET", "/data", true);
+          xhttp.send();
+        }
+
+        getData();
+        getConfig();
 
       </script>
   </body>

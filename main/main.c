@@ -408,6 +408,7 @@ static void http_server_netconn_serve(struct netconn *conn)
 
 static void http_server(void *pvParameters)
 {
+    int timeout = CONFIG_TASK_WDT_TIMEOUT_S * 500;
     esp_task_wdt_add(NULL);
     for (;;) {
         struct netconn *conn, *newconn;
@@ -415,14 +416,14 @@ static void http_server(void *pvParameters)
         conn = netconn_new(NETCONN_TCP);
         netconn_bind(conn, NULL, 80);
         netconn_listen(conn);
-        // netconn_set_sendtimeout(conn, 2000);
-        netconn_set_recvtimeout(conn, 2000);
+        // netconn_set_sendtimeout(conn, timeout);
+        netconn_set_recvtimeout(conn, timeout);
 
         do {
             while ((err = netconn_accept(conn, &newconn)) == ERR_OK) {
                 esp_task_wdt_reset();
-                netconn_set_sendtimeout(newconn, 2000);
-                netconn_set_recvtimeout(newconn, 2000);
+                netconn_set_sendtimeout(newconn, timeout);
+                netconn_set_recvtimeout(newconn, timeout);
 
                 set_led(true);
                 http_server_netconn_serve(newconn);

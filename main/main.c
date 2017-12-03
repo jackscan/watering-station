@@ -374,10 +374,17 @@ static void http_server_send_addr(struct netconn *conn)
 
 static void http_server_send_tasks(struct netconn *conn)
 {
-    char buf[uxTaskGetNumberOfTasks() * 40];
-    vTaskList(buf);
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, 0);
+    const char memfmt[] = "free: %zu(%zu)\nalloc: %zu(%zu)\nlargest: %zu\n"
+                          "minfree: %zu\nblocks: %zu\n";
+    char buf[uxTaskGetNumberOfTasks() * 40 + sizeof(memfmt) + 9 * 7];
+    int  n = snprintf(buf, sizeof(buf), memfmt, info.total_free_bytes,
+                     info.free_blocks, info.total_allocated_bytes,
+                     info.allocated_blocks, info.largest_free_block,
+                     info.minimum_free_bytes, info.total_blocks);
 
-
+    vTaskList(buf + n);
     http_server_send_ok(conn, buf);
 }
 

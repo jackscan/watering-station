@@ -123,10 +123,10 @@ static bool parse_config(const char *str, config_t *config)
 static void validate_config(config_t *config)
 {
     CLAMP(config->watering_hour, 0, 23);
-    CLAMP(config->min_water, 0, 10);
-    CLAMP(config->max_water, config->min_water, 20);
-    CLAMP(config->min_level, 0, config->dst_level);
-    CLAMP(config->dst_level, config->min_level, 4096);
+    CLAMP(config->min_water, 0, 10000);
+    CLAMP(config->max_water, config->min_water, 20000);
+    CLAMP(config->min_level, 0, 4095);
+    CLAMP(config->dst_level, config->min_level + 1, 4096);
 }
 
 static bool read_config(void)

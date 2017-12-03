@@ -743,7 +743,7 @@ void app_main(void)
     read_config();
 
     wait_for_ntp();
-    xTaskCreate(&http_server, "http_server", 2048, NULL, 5, NULL);
+    xTaskCreate(&http_server, "http_server", 4096, NULL, 5, NULL);
 
     xTaskCreate(&watering_task, "watering task", 2048, NULL, configMAX_PRIORITIES - 2, NULL);
     setup_button();

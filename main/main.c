@@ -191,6 +191,21 @@ static int read_moisture(TickType_t maxWait)
     return v;
 }
 
+static int secs_till_hour(void) {
+    time_t    now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    int diff = (60 - timeinfo.tm_min) * 60 - timeinfo.tm_sec;
+    if (diff <= 0) diff = 60 * 60;
+    return diff;
+}
+
+static TickType_t ticks_till_hour(void)
+{
+    return pdMS_TO_TICKS(secs_till_hour() * 1000);
+}
+
 static void http_server_send_ok(struct netconn *conn, const char *msg)
 {
     http_server_send_header(conn, HTTP_STATUS_OK, "txt");
@@ -504,17 +519,6 @@ static void watering_task(void *pvParameters)
     set_led(false);
     set_watering(false);
     abort();
-}
-
-static TickType_t ticks_till_hour(void)
-{
-    time_t    now;
-    struct tm timeinfo;
-    time(&now);
-    localtime_r(&now, &timeinfo);
-    int diff = (60 - timeinfo.tm_min) * 60 - timeinfo.tm_sec;
-    if (diff <= 0) diff = 60 * 60;
-    return pdMS_TO_TICKS(diff * 1000);
 }
 
 static void moisture_check(TimerHandle_t xTimer)

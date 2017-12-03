@@ -29,6 +29,9 @@
 
 #include "http.h"
 
+#define WTIMER_GROUP TIMER_GROUP_1
+#define WTIMER TIMER_0
+
 #define ADC1_MOISTURE_CHANNEL (ADC1_GPIO35_CHANNEL) // channel 7
 #define REF_GPIO (GPIO_NUM_25)
 #define W_GPIO (GPIO_NUM_27)
@@ -622,6 +625,44 @@ static void watering_task(void *pvParameters)
     abort();
 }
 
+static void IRAM_ATTR watering_timer_isr(void* arg)
+{
+    gpio_set_level(W_GPIO, 0);
+}
+
+static void do_watering(int t)
+{
+    if (t <= 0 || t > 20000) {
+        abort();
+    }
+
+    // configure timer
+    {
+        const uint32_t divider = 16;
+        uint32_t timeout = t * (TIMER_BASE_CLK / 1000) / divider;
+        timer_config_t tconfig = {
+            .alarm_en = false,
+            .counter_en = false,
+            .intr_type = TIMER_INTR_LEVEL,
+            .counter_dir = TIMER_COUNT_UP,
+            .auto_reload = false,
+            .divider = 16,
+        };
+        timer_group_t grp = WTIMER_GROUP;
+        timer_idx_t idx = WTIMER;
+        ON_ESP_ERROR(timer_init(grp, idx, &tconfig), abort());
+        ON_ESP_ERROR(timer_set_counter_value(grp, idx, 0x00000000ULL), abort());
+        ON_ESP_ERROR(timer_set_alarm_value(grp, idx, timeout), abort());
+        ON_ESP_ERROR(timer_enable_intr(grp, idx), abort());
+        ON_ESP_ERROR(timer_start(grp, idx), abort());
+        set_led(true);
+        gpio_set_level(W_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(t));
+        gpio_set_level(W_GPIO, 0);
+        set_led(false);
+    }
+}
+
 static void moisture_check(TimerHandle_t xTimer)
 {
     time_t    now = 0;
@@ -636,20 +677,24 @@ static void moisture_check(TimerHandle_t xTimer)
 
     int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
     bool watering = hour == s_station.config.watering_hour;
-    // int  water = 0;
+    int  water = 0;
 
     if (watering) {
-        // ESP_LOGI(TAG, "watering");
-        // TODO: calculate amount of water
-        // TODO: do watering
+        water = calculate_watering_time();
+        if (v > s_station.config.min_level) {
+            ESP_LOGI(TAG, "no watering: %d", v);
+            water = 0;
+        } else {
+            ESP_LOGI(TAG, "watering: %dms", water);
+            do_watering(water);
+        }
     }
 
     if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(5000))
         == pdTRUE) {
 
         if (watering) {
-            // TODO:
-            // s_station.wdata[s_station.wcount % (BACKLOG_DAYS)] = water;
+            s_station.wdata[s_station.wcount % (BACKLOG_DAYS)] = water;
             ++s_station.wcount;
         }
 
@@ -798,6 +843,10 @@ static void setup_watering_gpio(void)
     gpio_pad_select_gpio(W_GPIO);
     gpio_set_direction(W_GPIO, GPIO_MODE_OUTPUT);
     set_watering(false);
+
+    ON_ESP_ERROR(timer_isr_register(WTIMER_GROUP, WTIMER, watering_timer_isr, NULL,
+                                    ESP_INTR_FLAG_IRAM, NULL),
+                 abort());
 }
 
 static void setup_button(void)

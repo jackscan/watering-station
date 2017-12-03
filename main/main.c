@@ -566,18 +566,21 @@ static void watering_task(void *pvParameters)
     ON_ESP_ERROR(esp_task_wdt_add(NULL), abort());
     TickType_t     timeout = pdMS_TO_TICKS(CONFIG_TASK_WDT_TIMEOUT_S * 500);
     bool           state = false;
-    timer_config_t tconfig = {
-        .alarm_en = false,
-        .counter_en = false,
-        .intr_type = TIMER_INTR_LEVEL,
-        .counter_dir = TIMER_COUNT_UP,
-        .auto_reload = true,
-        .divider = 16,
-    };
 
-    // xTaskGetTickCount
+    // configure timer
+    {
+        timer_config_t tconfig = {
+            .alarm_en = false,
+            .counter_en = false,
+            .intr_type = TIMER_INTR_LEVEL,
+            .counter_dir = TIMER_COUNT_UP,
+            .auto_reload = true,
+            .divider = 16,
+        };
+        // xTaskGetTickCount
+        ON_ESP_ERROR(timer_init(TIMER_GROUP_0, TIMER_0, &tconfig), abort());
+    }
 
-    ON_ESP_ERROR(timer_init(TIMER_GROUP_0, TIMER_0, &tconfig), abort());
     for (;;) {
         uint32_t gpio_num;
         if (xQueueReceive(s_station.evqueue, &gpio_num, timeout)) {

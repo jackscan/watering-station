@@ -14,6 +14,7 @@ static const char TAG[] = "httpd";
 // static const char HTTP_STATUS_NOTFOUND[] = "HTTP/1.1 404 File not found\r\n";
 static const char HTTP_SERVER_AGENT[] = "Server: Watering Station\r\n";
 static const char HTTP_CONTENT_TYPE[] = "Content-type: ";
+static const char HTTP_CONNECTION_CLOSE[] = "Connection: close\r\n";
 // static const char HTTP_CACHE_CONTROL[] = "Cache-Control: public, max-age=";
 // static const char HTTP_PLAIN_TEXT[] = "text/plain";
 // static const char HTTP_JSON[] = "application/json";
@@ -108,6 +109,7 @@ void http_server_send_header(struct netconn *conn, http_status_code_t status,
     netconn_write(conn, status_str, strlen(status_str),
                   NETCONN_NOCOPY | NETCONN_MORE);
     NETCONN_WRITE_CONST(conn, HTTP_SERVER_AGENT);
+    NETCONN_WRITE_CONST(conn, HTTP_CONNECTION_CLOSE);
     NETCONN_WRITE_CONST(conn, HTTP_CONTENT_TYPE);
     const char *ctype = get_content_type(content_type);
     netconn_write(conn, ctype, strlen(ctype), NETCONN_NOCOPY | NETCONN_MORE);

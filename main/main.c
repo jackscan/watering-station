@@ -173,9 +173,9 @@ static int read_moisture(TickType_t maxWait)
         adc1_config_channel_atten(ADC1_MOISTURE_CHANNEL, ADC_ATTEN_11db);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
-        const int count = 16;
+        const int count = 256;
         for (int i = 0; i < count; ++i) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(2));
             v += 4096 - adc1_get_raw(ADC1_MOISTURE_CHANNEL);
             // ESP_LOGI(TAG, "v: %d", v);
         }

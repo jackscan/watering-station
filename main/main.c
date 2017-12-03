@@ -328,6 +328,27 @@ static void http_server_send_tasks(struct netconn *conn)
     http_server_send_ok(conn, buf);
 }
 
+static void http_server_send_config(struct netconn *conn)
+{
+    FILE *file = fopen("/config", "r");
+    if (file) {
+        char buf[32] = "[";
+        int  n = fread(buf + 1, 1, sizeof(buf) - 2, file);
+        fclose(file);
+
+        if (n > 0) {
+            buf[1 + n] = ']';
+            http_server_send_header(conn, HTTP_STATUS_OK, "json");
+            netconn_write(conn, buf, n + 2, NETCONN_COPY);
+            ESP_LOGI(TAG, "config: %*s", n + 2, buf);
+        }
+    } else {
+        http_server_send_header(conn, HTTP_STATUS_NOTFOUND, "txt");
+        const char *msg = "config not found";
+        netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
+    }
+}
+
 static void http_server_send_no_permission(struct netconn *conn)
 {
     http_server_send_header(conn, HTTP_STATUS_FORBIDDEN, "txt");
@@ -393,6 +414,8 @@ static void http_server_netconn_serve(struct netconn *conn)
                 http_server_send_addr(conn);
             } else if (strcmp(req.path, "/tasks") == 0) {
                 http_server_send_tasks(conn);
+            } else if (strcmp(req.path, "/config") == 0) {
+                http_server_send_config(conn);
             } else {
                 http_server_send_file(conn, req.path);
             }

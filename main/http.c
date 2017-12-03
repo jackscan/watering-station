@@ -9,11 +9,12 @@
 
 static const char TAG[] = "httpd";
 
-// static const char HTTP_STATUS_OK[] = "HTTP/1.0 200 OK\r\n";
-// static const char HTTP_STATUS_FORBIDDEN[] = "HTTP/1.0 403 Forbidden\r\n";
-// static const char HTTP_STATUS_NOTFOUND[] = "HTTP/1.0 404 File not found\r\n";
+// static const char HTTP_STATUS_OK[] = "HTTP/1.1 200 OK\r\n";
+// static const char HTTP_STATUS_FORBIDDEN[] = "HTTP/1.1 403 Forbidden\r\n";
+// static const char HTTP_STATUS_NOTFOUND[] = "HTTP/1.1 404 File not found\r\n";
 static const char HTTP_SERVER_AGENT[] = "Server: Watering Station\r\n";
 static const char HTTP_CONTENT_TYPE[] = "Content-type: ";
+// static const char HTTP_CACHE_CONTROL[] = "Cache-Control: public, max-age=";
 // static const char HTTP_PLAIN_TEXT[] = "text/plain";
 // static const char HTTP_JSON[] = "application/json";
 static const char HTTP_CRLF[] = "\r\n";
@@ -23,10 +24,10 @@ static const struct {
     http_status_code_t code;
     const char *str;
 } status_codes[] = {
-    { HTTP_STATUS_OK, "HTTP/1.0 200 OK\r\n" },
-    { HTTP_STATUS_BADREQUEST, "HTTP/1.0 403 Bad Request\r\n"},
-    { HTTP_STATUS_FORBIDDEN, "HTTP/1.0 403 Forbidden\r\n" },
-    { HTTP_STATUS_NOTFOUND, "HTTP/1.0 404 File not found\r\n" },
+    { HTTP_STATUS_OK, "HTTP/1.1 200 OK\r\n" },
+    { HTTP_STATUS_BADREQUEST, "HTTP/1.1 403 Bad Request\r\n"},
+    { HTTP_STATUS_FORBIDDEN, "HTTP/1.1 403 Forbidden\r\n" },
+    { HTTP_STATUS_NOTFOUND, "HTTP/1.1 404 File not found\r\n" },
     { HTTP_STATUS_INTERNALERROR, "500 Internal Server Error"},
 };
 

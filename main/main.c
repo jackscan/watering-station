@@ -155,7 +155,7 @@ static bool save_config(void)
     if (file) {
         if (fprintf(file, "%d,%d,%d,%d,%d", s_station.config.watering_hour,
                     s_station.config.min_water, s_station.config.max_water,
-                    s_station.config.dst_level, s_station.config.min_level)
+                    s_station.config.min_level, s_station.config.dst_level)
             > 0) {
             ret = true;
         }

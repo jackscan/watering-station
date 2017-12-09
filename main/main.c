@@ -56,6 +56,7 @@ static struct wstation {
     xQueueHandle      evqueue;
     int16_t           mdata[24 * BACKLOG_DAYS];
     int16_t           wdata[BACKLOG_DAYS];
+    int16_t           manual_water;
     int               mcount;
     int               wcount;
     int               time;
@@ -405,6 +406,13 @@ static void http_server_send_watering_calc(struct netconn *conn)
     http_server_send_ok(conn, buf);
 }
 
+static void http_server_send_manual_watering(struct netconn *conn)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", s_station.manual_water);
+    http_server_send_ok(conn, buf);
+}
+
 static void http_server_send_config(struct netconn *conn)
 {
     FILE *file = fopen("/config", "r");
@@ -498,6 +506,8 @@ static void http_server_netconn_serve(struct netconn *conn)
                 http_server_send_tasks(conn);
             } else if (strcmp(req.path, "/calc") == 0) {
                 http_server_send_watering_calc(conn);
+            } else if (strcmp(req.path, "/manual") == 0) {
+                http_server_send_manual_watering(conn);
             } else if (strcmp(req.path, "/config") == 0) {
                 http_server_send_config(conn);
             } else {
@@ -614,9 +624,7 @@ static void watering_task(void *pvParameters)
                     esp_task_wdt_reset();
                     if (xSemaphoreTake(s_station.dataSemHandle, timeout)
                         == pdTRUE) {
-                        s_station.wdata[(s_station.wcount + BACKLOG_DAYS - 1)
-                                        % (BACKLOG_DAYS)]
-                            = (int16_t)(t * 1000);
+                        s_station.manual_water = (int16_t)(t * 1000);
                         xSemaphoreGive(s_station.dataSemHandle);
                     }
                 }

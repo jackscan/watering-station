@@ -93,6 +93,13 @@
           options: {
             horizontalLine: [],
             scales: {
+              xAxes: [{
+                id: 'moist-x-axis',
+                offset: false,
+                gridLines: {
+                  offsetGridLines: false
+                }
+              }],
               yAxes: [{
                 id: 'moist-y-axis',
                 type: 'linear',

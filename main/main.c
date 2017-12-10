@@ -137,7 +137,7 @@ static void validate_config(config_t *config)
 {
     CLAMP(config->watering_hour, 0, 23);
     CLAMP(config->min_water, 0, 10000);
-    CLAMP(config->max_water, config->min_water, 20000);
+    CLAMP(config->max_water, config->min_water, 60000);
     CLAMP(config->min_level, 0, 4095);
     CLAMP(config->dst_level, config->min_level + 1, 4096);
 }

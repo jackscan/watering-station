@@ -79,6 +79,15 @@
               {
                 type: 'line',
                 data: [],
+                label: "Temperature",
+                yAxisID: 'temp-y-axis',
+                borderColor: "#ff8000",
+                backgroundColor: "#ffa000",
+                fill: false
+              },
+              {
+                type: 'line',
+                data: [],
                 label: "Average Moisture",
                 yAxisID: 'moist-y-axis',
                 borderColor: "#ffa000",
@@ -107,15 +116,19 @@
               yAxes: [{
                 id: 'moist-y-axis',
                 type: 'linear',
-                position: 'left',
-                ticks: {
-                  suggestedMin: 1400,
-                  suggestedMax: 1600,
-                }
+                position: 'left'
               }, {
                 id: 'water-y-axis',
                 type: 'linear',
                 position: 'right'
+              }, {
+                id: 'temp-y-axis',
+                type: 'linear',
+                position: 'left',
+                ticks: {
+                  suggestedMin: 10,
+                  suggestedMax: 30
+                }
               }]
             }
           }
@@ -126,6 +139,7 @@
             xhttp.onreadystatechange = function () {
                 if (this.readyState == 4 && this.status == 200) {
                     var resp = JSON.parse(xhttp.responseText);
+                    var hour = resp[0];
                     var minw = resp[1]/1000;
                     var maxw = resp[2]/1000;
                     var minm = resp[3];
@@ -151,11 +165,11 @@
           xhttp.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
               var resp = JSON.parse(xhttp.responseText);
-              var mlen = resp.moisture.data.length;
-              var wlen = resp.water.data.length;
+              var mlen = resp.moisture.length;
+              var wlen = resp.water.length;
               // var today = new Date();
               // var mstart =
-              var mstart = (resp.moisture.time + 1 - (mlen % 24) + 24) % 24;
+              var mstart = (resp.time + 1 - (mlen % 24) + 24) % 24;
               var wstart = mstart + mlen - wlen * 24;
               var iw = 0;
               var h;
@@ -165,16 +179,17 @@
               for (i = 0; i < mlen; ++i) {
                 h = (mstart + i) % 24;
                 chart.data.labels.push(h);
-                chart.data.datasets[0].data.push(resp.moisture.data[i]);
-                avg += resp.moisture.data[i];
+                chart.data.datasets[0].data.push(resp.moisture[i]);
+                chart.data.datasets[2].data.push(resp.temperature[i]);
+                avg += resp.moisture[i];
                 ++count;
-                if (h == resp.water.time) {
-                  w = resp.water.data[iw];
+                if (h == resp.wtime) {
+                  w = resp.water[iw];
                   // fill average data
                   if (w > 0) {
                     avg /= count;
                     for (j = 0; j < count; ++j)
-                      chart.data.datasets[2].data.push(avg);
+                      chart.data.datasets[3].data.push(avg);
                     avg = 0;
                     count = 0;
                   } else {
@@ -191,7 +206,7 @@
               if (count > 0) {
                 avg /= count;
                 for (j = 0; j < count; ++j)
-                  chart.data.datasets[2].data.push(avg);
+                  chart.data.datasets[3].data.push(avg);
               }
 
               // console.log(chart.data.datasets[0].data.length + ", " + chart.data.datasets[1].data.length);
@@ -203,8 +218,8 @@
           xhttp.send();
         }
 
-        getData();
         getConfig();
+        getData();
 
       </script>
   </body>

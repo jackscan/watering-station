@@ -31,6 +31,8 @@
 #include <assert.h>
 #include <string.h>
 
+#include "sht31.h"
+
 #include "http.h"
 
 #define TEST_CYCLE 0
@@ -60,8 +62,10 @@ typedef struct {
 
 static struct wstation {
     xQueueHandle      evqueue;
+    xQueueHandle      ckqueue;
     int16_t           mdata[24 * BACKLOG_DAYS];
     int16_t           tdata[24 * BACKLOG_DAYS];
+    int16_t           hdata[24 * BACKLOG_DAYS];
     int16_t           wdata[BACKLOG_DAYS];
     int16_t           manual_water;
     int               count;
@@ -204,25 +208,15 @@ static int read_moisture(TickType_t maxWait)
     return v;
 }
 
-static int read_temperature(TickType_t maxWait)
+static bool update_ht(TickType_t maxWait)
 {
-    int t = INVALID_VALUE;
+    bool result = false;
     if (xSemaphoreTake(s_station.sensorSemHandle, maxWait) == pdTRUE) {
-        SET_PERI_REG_BITS(SENS_SAR_MEAS_WAIT2_REG, SENS_FORCE_XPD_SAR, 3, SENS_FORCE_XPD_SAR_S);
-        SET_PERI_REG_BITS(SENS_SAR_TSENS_CTRL_REG, SENS_TSENS_CLK_DIV, 10, SENS_TSENS_CLK_DIV_S);
-        CLEAR_PERI_REG_MASK(SENS_SAR_TSENS_CTRL_REG, SENS_TSENS_POWER_UP);
-        CLEAR_PERI_REG_MASK(SENS_SAR_TSENS_CTRL_REG, SENS_TSENS_DUMP_OUT);
-        SET_PERI_REG_MASK(SENS_SAR_TSENS_CTRL_REG, SENS_TSENS_POWER_UP_FORCE);
-        SET_PERI_REG_MASK(SENS_SAR_TSENS_CTRL_REG, SENS_TSENS_POWER_UP);
-        ets_delay_us(100);
-        SET_PERI_REG_MASK(SENS_SAR_TSENS_CTRL_REG, SENS_TSENS_DUMP_OUT);
-        ets_delay_us(5);
-        t = GET_PERI_REG_BITS2(SENS_SAR_SLAVE_ADDR3_REG, SENS_TSENS_OUT, SENS_TSENS_OUT_S);
+        result = sht31_readTempHum();
         xSemaphoreGive(s_station.sensorSemHandle);
     }
-    return t - 100;
+    return result;
 }
-
 
 static int calculate_watering_time(void) {
 
@@ -301,6 +295,12 @@ static void http_server_send_ok(struct netconn *conn, const char *msg)
     netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
 }
 
+static void http_server_send_error(struct netconn *conn, const char *msg)
+{
+    http_server_send_header(conn, HTTP_STATUS_INTERNALERROR, "txt");
+    netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
+}
+
 static void http_server_send_measurement(struct netconn *conn)
 {
     int v = read_moisture(pdMS_TO_TICKS(100));
@@ -310,13 +310,21 @@ static void http_server_send_measurement(struct netconn *conn)
     http_server_send_ok(conn, buf);
 }
 
-static void http_server_send_temperature(struct netconn *conn)
+static void http_server_send_ht(struct netconn *conn)
 {
-    int v = read_temperature(pdMS_TO_TICKS(100));
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", v);
+    // int v = read_temperature(pdMS_TO_TICKS(100));
+    // char buf[32];
+    // snprintf(buf, sizeof(buf), "%d, %d", v);
 
-    http_server_send_ok(conn, buf);
+    // http_server_send_ok(conn, buf);
+
+    if (update_ht(pdMS_TO_TICKS(100))) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f, %.2f", sht31_readTemperature(), sht31_readHumidity());
+        http_server_send_ok(conn, buf);
+    } else {
+        http_server_send_error(conn, "failed to read sht31");
+    }
 }
 
 static void http_server_send_time(struct netconn *conn)
@@ -368,6 +376,9 @@ static void http_server_send_data(struct netconn *conn)
         NETCONN_WRITE_CONST(conn, "],\"temperature\":[");
         http_server_send_ringbuf(conn, s_station.tdata, BACKLOG_DAYS * 24,
                                  s_station.count);
+        NETCONN_WRITE_CONST(conn, "],\"humidity\":[");
+        http_server_send_ringbuf(conn, s_station.hdata, BACKLOG_DAYS * 24,
+                                s_station.count);
         NETCONN_WRITE_CONST(conn, "],\"water\":[");
         http_server_send_ringbuf(conn, s_station.wdata, BACKLOG_DAYS,
                                  s_station.wcount);
@@ -486,12 +497,6 @@ static void http_server_send_bad_request(struct netconn *conn, const char *msg)
     netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
 }
 
-static void http_server_send_error(struct netconn *conn, const char *msg)
-{
-    http_server_send_header(conn, HTTP_STATUS_INTERNALERROR, "txt");
-    netconn_write(conn, msg, strlen(msg), NETCONN_COPY);
-}
-
 static void http_server_netconn_serve(struct netconn *conn)
 {
     struct netbuf *inbuf = NULL;
@@ -533,8 +538,8 @@ static void http_server_netconn_serve(struct netconn *conn)
                 http_server_send_file(conn, "/index.html");
             } else if (strcmp(req.path, "/measure") == 0) {
                 http_server_send_measurement(conn);
-            } else if (strcmp(req.path, "/temp") == 0) {
-                http_server_send_temperature(conn);
+            } else if (strcmp(req.path, "/ht") == 0) {
+                http_server_send_ht(conn);
             } else if (strcmp(req.path, "/time") == 0) {
                 http_server_send_time(conn);
             } else if (strcmp(req.path, "/data") == 0) {
@@ -718,7 +723,7 @@ static void do_watering(int t)
     }
 }
 
-static void moisture_check(TimerHandle_t xTimer)
+static void sensor_check(void)
 {
     time_t    now = 0;
     struct tm timeinfo = { 0 };
@@ -728,7 +733,17 @@ static void moisture_check(TimerHandle_t xTimer)
     strftime(buf, sizeof(buf), "%c", &timeinfo);
 
     int v = read_moisture(pdMS_TO_TICKS(2000));
-    int t = read_temperature(pdMS_TO_TICKS(100));
+    ESP_LOGI(TAG, "moisture: %d", v);
+    int t = 0;
+    int h = 0;
+    // read_temperature(pdMS_TO_TICKS(100));
+
+    if (update_ht(pdMS_TO_TICKS(2000))) {
+        t = (int)(sht31_readTemperature() * 100 + 0.5f);
+        h = (int)(sht31_readHumidity() * 100 + 0.5f);
+        ESP_LOGI(TAG, "temperature: %d, humidity: %d", t, h);
+    }
+
     // ESP_LOGI(TAG, "time: %s, moisture: %d", buf, v);
 
     int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
@@ -761,13 +776,40 @@ static void moisture_check(TimerHandle_t xTimer)
 
         s_station.mdata[s_station.count % (24 * BACKLOG_DAYS)] = (int16_t)v;
         s_station.tdata[s_station.count % (24 * BACKLOG_DAYS)] = (int16_t)t;
+        s_station.hdata[s_station.count % (24 * BACKLOG_DAYS)] = (int16_t)h;
         s_station.time = hour;
         ++s_station.count;
         xSemaphoreGive(s_station.dataSemHandle);
     }
+}
 
-    if (xTimerChangePeriod(xTimer, ticks_till_hour(), 0) != pdPASS)
+static void sensor_task(void *pvParameters)
+{
+    // XXX: not used right now
+    uint32_t index = 0;
+    for (;;) {
+        if (xQueueReceive(s_station.ckqueue, &index, portMAX_DELAY)) {
+            sensor_check();
+        } else {
+            ESP_LOGE(TAG, "ckqueue error");
+        }
+    }
+}
+
+static void sensor_timer(TimerHandle_t xTimer)
+{
+    static uint32_t count = 0;
+    if (xQueueSendToBack(s_station.ckqueue, &count, 0) != pdPASS) {
+        ESP_LOGE(TAG, "failed to queue check %u", count);
         assert(false);
+    }
+
+    ++count;
+
+    if (xTimerChangePeriod(xTimer, ticks_till_hour(), 0) != pdPASS) {
+        ESP_LOGE(TAG, "failed to reschedule senstor timer");
+        assert(false);
+    }
 }
 
 static void wifi_init(void)
@@ -849,6 +891,7 @@ static void setup_data(void)
         for (int j = 0; j < 24; ++j) {
             s_station.mdata[i * 24 + j] = INVALID_VALUE;
             s_station.tdata[i * 24 + j] = INVALID_VALUE;
+            s_station.hdata[i * 24 + j] = INVALID_VALUE;
         }
         s_station.wdata[i] = INVALID_VALUE;
     }
@@ -863,6 +906,10 @@ static void setup_data(void)
 
     s_station.evqueue = xQueueCreate(10, sizeof(uint32_t));
     configASSERT(s_station.evqueue);
+
+    s_station.ckqueue = xQueueCreate(1, sizeof(uint32_t));
+    configASSERT(s_station.ckqueue);
+
     ip4addr_aton(CONFIG_WHITELIST_IPADDR, &s_station.whitelist_ipaddr);
     ip4addr_aton(CONFIG_WHITELIST_NETMASK, &s_station.whitelist_netmask);
 }
@@ -872,6 +919,8 @@ static void setup_sensor(void)
     gpio_pad_select_gpio(REF_GPIO);
     gpio_set_direction(REF_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(REF_GPIO, 0);
+
+    sht31_init();
 }
 
 static void setup_time(void)
@@ -959,14 +1008,20 @@ void app_main(void)
     wait_for_ntp();
     xTaskCreate(&http_server, "http_server", 4096, NULL, 5, NULL);
 
-    xTaskCreate(&watering_task, "watering task", 2048, NULL, configMAX_PRIORITIES - 2, NULL);
-    setup_button();
-
-    TimerHandle_t timer = xTimerCreate("Init Moisture Check", ticks_till_hour(),
-                                       pdFALSE, NULL, moisture_check);
-    assert(timer);
-    xTimerStart(timer, 0);
-
     xSemaphoreGive(s_station.dataSemHandle);
     xSemaphoreGive(s_station.sensorSemHandle);
+
+    xTaskCreate(&sensor_task, "sensor_task", 2048, NULL, 4, NULL);
+
+    xTaskCreate(&watering_task, "watering_task", 2048, NULL, configMAX_PRIORITIES - 2, NULL);
+    setup_button();
+
+    TickType_t    initial_delay = ticks_till_hour();
+#if TEST_CYCLE
+    initial_delay = 1;
+#endif
+    TimerHandle_t timer = xTimerCreate("Init Moisture Check", initial_delay,
+                                       pdFALSE, NULL, sensor_timer);
+    assert(timer);
+    xTimerStart(timer, 0);
 }

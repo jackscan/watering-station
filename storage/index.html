@@ -88,12 +88,20 @@
               {
                 type: 'line',
                 data: [],
+                label: "Humidity",
+                yAxisID: 'hum-y-axis',
+                borderColor: "#7080ff",
+                backgroundColor: "#5090ff",
+                fill: false
+              },
+              {
+                type: 'line',
+                data: [],
                 label: "Average Moisture",
                 yAxisID: 'moist-y-axis',
                 borderColor: "#ffa000",
                 backgroundColor: "#ffc040",
                 borderWidth: 1,
-                cubicInterpolationMode: 'monotone',
                 pointRadius: 0,
                 fill: false
               }
@@ -101,6 +109,11 @@
           },
           options: {
             horizontalLine: [],
+            elements: {
+              line: {
+                cubicInterpolationMode: 'monotone'
+              }
+            },
             scales: {
               xAxes: [{
                 id: 'moist-x-axis',
@@ -128,6 +141,14 @@
                 ticks: {
                   suggestedMin: 10,
                   suggestedMax: 30
+                }
+              }, {
+                id: 'hum-y-axis',
+                type: 'linear',
+                position: 'left',
+                ticks: {
+                  suggestedMin: 0,
+                  suggestedMax: 100
                 }
               }]
             }
@@ -180,7 +201,8 @@
                 h = (mstart + i) % 24;
                 chart.data.labels.push(h);
                 chart.data.datasets[0].data.push(resp.moisture[i]);
-                chart.data.datasets[2].data.push(resp.temperature[i]);
+                chart.data.datasets[2].data.push(resp.temperature[i]/100);
+                chart.data.datasets[3].data.push(resp.humidity[i]/100);
                 avg += resp.moisture[i];
                 ++count;
                 if (h == resp.wtime) {
@@ -189,7 +211,7 @@
                   if (w > 0) {
                     avg /= count;
                     for (j = 0; j < count; ++j)
-                      chart.data.datasets[3].data.push(avg);
+                      chart.data.datasets[4].data.push(avg);
                     avg = 0;
                     count = 0;
                   } else {
@@ -206,7 +228,7 @@
               if (count > 0) {
                 avg /= count;
                 for (j = 0; j < count; ++j)
-                  chart.data.datasets[3].data.push(avg);
+                  chart.data.datasets[4].data.push(avg);
               }
 
               // console.log(chart.data.datasets[0].data.length + ", " + chart.data.datasets[1].data.length);

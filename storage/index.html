@@ -68,15 +68,6 @@
                 fill: false
               },
               {
-                type: 'bar',
-                data: [],
-                yAxisID: 'water-y-axis',
-                label: "Watering",
-                borderColor: "#0030a0",
-                backgroundColor: "#1060c0",
-                fill: false
-              },
-              {
                 type: 'line',
                 data: [],
                 label: "Temperature",
@@ -103,6 +94,15 @@
                 backgroundColor: "#ffc040",
                 borderWidth: 1,
                 pointRadius: 0,
+                fill: false
+              },
+              {
+                type: 'bar',
+                data: [],
+                yAxisID: 'water-y-axis',
+                label: "Watering",
+                borderColor: "#0030a0",
+                backgroundColor: "#1060c0",
                 fill: false
               }
             ]
@@ -201,8 +201,8 @@
                 h = (mstart + i) % 24;
                 chart.data.labels.push(h);
                 chart.data.datasets[0].data.push(resp.moisture[i]);
-                chart.data.datasets[2].data.push(resp.temperature[i]/100);
-                chart.data.datasets[3].data.push(resp.humidity[i]/100);
+                chart.data.datasets[1].data.push(resp.temperature[i]/100);
+                chart.data.datasets[2].data.push(resp.humidity[i]/100);
                 avg += resp.moisture[i];
                 ++count;
                 if (h == resp.wtime) {
@@ -211,24 +211,24 @@
                   if (w > 0) {
                     avg /= count;
                     for (j = 0; j < count; ++j)
-                      chart.data.datasets[4].data.push(avg);
+                      chart.data.datasets[3].data.push(avg);
                     avg = 0;
                     count = 0;
                   } else {
                     w = 0;
                   }
 
-                  chart.data.datasets[1].data.push(w / 1000);
+                  chart.data.datasets[4].data.push(w / 1000);
                   ++iw;
                 } else {
-                  chart.data.datasets[1].data.push(0);
+                  chart.data.datasets[4].data.push(0);
                 }
               }
 
               if (count > 0) {
                 avg /= count;
                 for (j = 0; j < count; ++j)
-                  chart.data.datasets[4].data.push(avg);
+                  chart.data.datasets[3].data.push(avg);
               }
 
               // console.log(chart.data.datasets[0].data.length + ", " + chart.data.datasets[1].data.length);

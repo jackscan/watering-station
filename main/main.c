@@ -257,8 +257,9 @@ static int calculate_watering_time(void) {
     }
 
     if (count == 0) {
-        avg = read_moisture(pdMS_TO_TICKS(100));
-        minlevel = avg;
+        minlevel = read_moisture(pdMS_TO_TICKS(100));
+        avg = s_station.config.dst_level + minlevel
+              - s_station.config.min_level;
         count = 1;
     }
 

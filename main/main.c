@@ -244,7 +244,7 @@ static int calculate_watering_time(void) {
     int count = 0;
     const int BACKLOG_HOURS = BACKLOG_DAYS * 24;
     if (xSemaphoreTake(s_station.dataSemHandle, pdMS_TO_TICKS(100)) == pdTRUE) {
-        for (int i = 0; i < BACKLOG_DAYS * durw; ++i) {
+        for (int i = 0; i < 24 * durw; ++i) {
             int m = s_station.mdata[(s_station.count + BACKLOG_HOURS - i)
                                     % (BACKLOG_HOURS)];
             if (m >= 0) {

@@ -239,6 +239,7 @@ static int calculate_watering_time(void) {
         xSemaphoreGive(s_station.dataSemHandle);
     }
 
+    int minlevel = 4096;
     int avg = 0;
     int count = 0;
     const int BACKLOG_HOURS = BACKLOG_DAYS * 24;
@@ -249,6 +250,7 @@ static int calculate_watering_time(void) {
             if (m >= 0) {
                 ++count;
                 avg += m;
+                if (minlevel > m) minlevel = m;
             }
         }
         xSemaphoreGive(s_station.dataSemHandle);
@@ -256,8 +258,12 @@ static int calculate_watering_time(void) {
 
     if (count == 0) {
         avg = read_moisture(pdMS_TO_TICKS(100));
+        minlevel = avg;
         count = 1;
     }
+
+    // only water if level is below config.min_level
+    if (minlevel > s_station.config.min_level) return 0;
 
     avg /= count;
 
@@ -757,9 +763,8 @@ static void sensor_check(void)
 
     if (watering) {
         water = calculate_watering_time();
-        if (v > s_station.config.min_level) {
+        if (water == 0) {
             ESP_LOGI(TAG, "no watering: %d", v);
-            water = 0;
         } else {
             ESP_LOGI(TAG, "watering: %dms", water);
             do_watering(water);

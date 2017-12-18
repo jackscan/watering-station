@@ -738,6 +738,16 @@ static void sensor_check(void)
     localtime_r(&now, &timeinfo);
     char buf[256];
     strftime(buf, sizeof(buf), "%c", &timeinfo);
+    int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
+    bool watering = hour == s_station.config.watering_hour;
+#if TEST_CYCLE
+    hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min) % 24;
+    watering = true;
+#endif
+
+    // prevent double measurement
+    if (hour == s_station.time)
+        return;
 
     int v = read_moisture(pdMS_TO_TICKS(2000));
     ESP_LOGI(TAG, "moisture: %d", v);
@@ -753,12 +763,6 @@ static void sensor_check(void)
 
     // ESP_LOGI(TAG, "time: %s, moisture: %d", buf, v);
 
-    int  hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min + 30) / 60;
-    bool watering = hour == s_station.config.watering_hour;
-#if TEST_CYCLE
-    hour = (timeinfo.tm_hour * 60 + timeinfo.tm_min) % 24;
-    watering = true;
-#endif
 
     int  water = 0;
 
@@ -901,6 +905,7 @@ static void setup_data(void)
         }
         s_station.wdata[i] = INVALID_VALUE;
     }
+    s_station.time = -1;
     s_station.count = 0;
     s_station.wcount = 0;
 

@@ -816,7 +816,20 @@ static void sensor_timer(TimerHandle_t xTimer)
 
     ++count;
 
-    if (xTimerChangePeriod(xTimer, ticks_till_hour(), 0) != pdPASS) {
+    int s = secs_till_hour();
+    // plausibility check:
+    // If sensor timer is triggered shortly before full hour then
+    // we would arm the timer for the same hour a second time.
+    // Therefore if time to full hour is less than 5 minutes add another hour
+    // for next timer.
+    if (s < 300)
+        s += 3600;
+
+#if TEST_CYCLE
+    s = 60;
+#endif
+
+    if (xTimerChangePeriod(xTimer, pdMS_TO_TICKS(s * 1000), 0) != pdPASS) {
         ESP_LOGE(TAG, "failed to reschedule senstor timer");
         assert(false);
     }
